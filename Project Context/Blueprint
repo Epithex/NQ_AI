@@ -1,0 +1,94 @@
+Project Blueprint: NQ_AI
+This document contains the complete, high-level strategic plan for the "AI Liquidity Analyst" project. It is the master reference for all core logic and design decisions.
+
+1. Project Overview
+Goal: To build and train a specialized AI model that provides a daily, pre-market analysis of the /NQ 4-hour chart.
+
+Core Strategy: The system is based on a "hindsight" training methodology. The AI will be a hybrid visual/numerical model trained to recognize the pre-market patterns that precede a successful liquidity sweep of a key swing high or low. In a live environment, the AI's role is not to trade directly, but to score the probability of success for all visible liquidity catalysts, providing a data-driven forecast to inform trading decisions.
+
+2. The Technology Stack
+Core Language: Python
+
+Package Management: venv (virtual environment) and pip.
+
+Data Handling: pandas for loading and manipulating time-series data.
+
+Data Acquisition: yfinance for downloading historical /NQ price data.
+
+Image Generation & Annotation: mplfinance for creating and saving clean chart images for the AI and annotated charts for our validation.
+
+AI & Machine Learning:
+
+TensorFlow (Keras API): To load, fine-tune, and train our vision model.
+
+scikit-learn: For utility tasks like splitting our data into Training, Validation, and Test sets.
+
+Development Environment:
+
+IDE: Cursor.
+
+Interactive Development: The Python Interactive Window feature within Cursor (powered by the Jupyter extension).
+
+3. Market Structure Engine (Definitive Ruleset)
+This is the logical core of the script. It is a purely factual, mechanical engine that maintains a constant understanding of the market's state.
+
+The Key Levels
+Structural High / Low: The major, validated boundaries of the current trend.
+
+Swing High / Low: The most recent, factual peaks and troughs that have not yet been validated as structural.
+
+Previous Structural High / Low: A memory of the last major structural points for historical and contextual analysis.
+
+The Market States
+UPTREND: A confirmed series of higher Structural Highs and Structural Lows.
+
+DOWNTREND: A confirmed series of lower Structural Lows and Structural Highs.
+
+The Definitive Rules
+In a Confirmed UPTREND:
+New Structural High Creation: After the current Structural High is broken, the very first Swing High that is formed is instantly promoted to the new Structural High.
+
+New Structural Low Creation: A Swing Low (a pullback) is only promoted to a Structural Low at the moment the price breaks above the most recent Structural High, proving the trend is continuing.
+
+Termination: The UPTREND state terminates and flips to DOWNTREND the moment the price breaks below the current Structural Low.
+
+In a Confirmed DOWNTREND:
+New Structural Low Creation: After the current Structural Low is broken, the very first Swing Low that is formed is instantly promoted to the new Structural Low.
+
+New Structural High Creation: A Swing High (a pullback) is only promoted to a Structural High at the moment the price breaks below the most recent Structural Low, proving the trend is continuing.
+
+Termination: The DOWNTREND state terminates and flips to UPTREND the moment the price breaks above the current Structural High.
+
+4. The Data Factory (Definitive Workflow)
+This script uses the "Hindsight" method to create our labeled dataset.
+
+Find the Outcome: The script scans the historical data (2018-2022) to find a successful breakout of a Structural High/Low or a Session_Rangebound day.
+
+Handle Breakout Days: If a breakout occurred, the script works backward to find the last Swing High or Swing Low that was swept just before the major move. This is the Actual Catalyst.
+
+Capture the Setup: The script saves a clean, unaltered image of the pre-market chart from the morning of the day the event occurred.
+
+Identify All Candidates: At that pre-market moment, the script identifies all visible internal, unswept Swing Highs and Swing Lows.
+
+Generate Labeled Samples: The script creates multiple training samples from this single event:
+
+The sample corresponding to the Actual Catalyst level gets the label Success (1).
+
+All other candidate levels for that setup get the label Failure (0).
+
+For Rangebound days, a single sample is created with a specific Rangebound label to teach the AI about "no trade" conditions.
+
+Each sample consists of the setup image filename, numerical features about the candidate level, and the final label.
+
+5. AI Model & Live Deployment
+The AI Model: We will train a hybrid model that accepts both the chart image and a complete list of relative numerical features for all key levels (Structural, Previous, and all Swing Candidates) at once.
+
+The Daily Briefing: The live script will run each morning at 8:00 AM EST.
+
+It uses the Market Structure Engine to identify the current structural range and all candidate Swing High/Low levels.
+
+It then loops through each candidate and asks the AI for a prediction for that specific level, while always providing the AI with the full context of all other levels.
+
+The AI returns a probability score for a successful outcome for each candidate.
+
+The script then generates the final report, ranking the potential catalysts for the day by the AI's confidence score.

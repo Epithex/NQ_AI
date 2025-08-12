@@ -1,0 +1,78 @@
+Technical Blueprint: NQ_AI
+This document provides the complete technical schema and development guide for the "AI Liquidity Analyst" project. It is intended for a junior developer AI model with strong coding capabilities but requiring detailed project context.
+
+1. Code Architecture & Schema
+The project will be built around a central script, data_factory.py, developed interactively within Cursor.
+
+Class: MarketStructureEngine
+Purpose: This class is the logical core of the project. It processes historical OHLCV data and maintains a perfect, stateful understanding of the market structure according to our definitive ruleset.
+
+Instance Variables (The "Memory"):
+
+data (pd.DataFrame): The full historical price data.
+
+market_state (str): The current state, e.g., "UPTREND".
+
+structural_high (float), structural_low (float)
+
+swing_high (float), swing_low (float)
+
+previous_structural_high (float), previous_structural_low (float)
+
+history (list): A list of dictionaries, logging each state change and structural point creation for debugging and validation.
+
+Methods (The "Logic"):
+
+__init__(self, ohlc_data)
+
+run_analysis(self)
+
+_check_uptrend_logic(self, current_candle)
+
+_check_downtrend_logic(self, current_candle)
+
+_find_swing_high(self, index)
+
+_find_swing_low(self, index)
+
+get_structure_at_timestamp(self, timestamp)
+
+Class: DataFactory
+Purpose: This class uses the MarketStructureEngine to perform the "hindsight" analysis and generate the final labeled dataset for the AI.
+
+Instance Variables:
+
+engine (MarketStructureEngine)
+
+raw_data (pd.DataFrame)
+
+labeled_samples (list)
+
+Methods:
+
+__init__(self, engine, raw_data)
+
+generate_dataset(self, start_date, end_date)
+
+_find_session_outcome(self, session_data): A private method that scans a day's session data to see if a major Structural High/Low was broken, or if it was a range day.
+
+_find_catalyst(self, breakout_event)
+
+_capture_setup_image(self, setup_timestamp)
+
+_get_all_key_levels(self, setup_timestamp): A private method that identifies all visible structural and unswept swing points at the pre-market time.
+
+_generate_full_feature_set(self, key_levels, context): A private method that calculates the relative numerical features (distance, age, etc.) for all key levels, creating the full "battlefield map."
+
+save_labels_to_csv(self)
+
+2. Development Best Practices
+Version Control: The entire NQ_AI_Project folder should be a Git repository. Use a .gitignore file to exclude the venv folder and large data files.
+
+Code Quality (Linting & Formatting): The AI developer should use Ruff for linting and Black for auto-formatting to ensure clean, professional, and consistent code. These can be integrated directly into Cursor.
+
+Data Integrity (Preventing Leakage): Our strict separation of Training (2018-2022), Validation (2023), and Test (2024-Present) sets is the primary defense against data leakage.
+
+Reproducibility: Use the requirements.txt file for environment replication. Store key parameters in a separate configuration file (e.g., config.yaml).
+
+Interactive Development: Use the Python Interactive Window feature within Cursor (powered by the Jupyter extension). This allows for cell-by-cell execution and visualization directly within a .py script, providing the benefits of a notebook in a cleaner format.

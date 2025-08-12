@@ -1,0 +1,156 @@
+Code Reference & Implementation Guide: AI Liquidity Analyst (V2)
+This document provides the reference schema, pseudocode, and best practices required to implement the "AI Liquidity Analyst" project. It is intended to guide a junior developer AI in the creation of the final script with maximum clarity and precision.
+
+1. Python Development Best Practices
+The generated code must adhere to the following professional standards:
+
+PEP 8: Follow the official Python style guide for all code. Use an auto-formatter like Black to ensure consistency.
+
+Type Hinting: All function signatures must include type hints (e.g., def my_function(name: str) -> bool:). This improves code clarity and allows for static analysis.
+
+Docstrings: Every class and function must have a clear, concise docstring explaining its purpose, arguments, and what it returns (e.g., using Google-style docstrings).
+
+Modularity: The logic should be encapsulated in the classes and methods defined in the blueprint. Avoid long, monolithic scripts.
+
+Configuration Management: Do not hard-code values like file paths, tickers, or date ranges. These should be stored in a separate config.yaml file and loaded by the script.
+
+2. Class: MarketStructureEngine
+Purpose: To process historical price data and maintain a perfect, stateful understanding of market structure.
+
+import pandas as pd
+
+class MarketStructureEngine:
+    """
+    Analyzes OHLCV data to determine market structure based on a set of mechanical rules.
+    """
+
+    def __init__(self, ohlc_data: pd.DataFrame):
+        """
+        Initializes the engine with price data and sets up initial state variables.
+
+        Args:
+            ohlc_data (pd.DataFrame): A DataFrame with 'Open', 'High', 'Low', 'Close' columns, indexed by timestamp.
+        """
+        self.data = ohlc_data
+        # ... initialize all state variables to None ...
+        self.history = []
+        # PSEUDOCODE:
+        # 1. Analyze the most recent data to find the last completed swing high and swing low.
+        # 2. Treat this initial swing range as the first Structural Range to begin the analysis.
+        # 3. Determine if the initial state is UPTREND or DOWNTREND based on this first range.
+        # 4. Store these initial values in the instance variables.
+
+    def run_analysis(self):
+        """
+        The main loop that iterates through the entire dataset bar-by-bar
+        and applies the correct logic for each candle to update the market state.
+        """
+        # PSEUDOCODE:
+        # 1. for index, candle in self.data.iterrows():
+        # 2.   if self.market_state == "UPTREND":
+        # 3.     self._check_uptrend_logic(index, candle)
+        # 4.   elif self.market_state == "DOWNTREND":
+        # 5.     self._check_downtrend_logic(index, candle)
+        # 6.   Log any changes to self.history.
+
+    def _check_uptrend_logic(self, index, candle):
+        """
+        Contains the specific rules for an UPTREND state.
+        Checks for trend termination or continuation.
+        """
+        # PSEUDOCODE:
+        # 1. Check for Termination:
+        #    if candle['Low'] < self.structural_low:
+        #      - Change self.market_state to "DOWNTREND".
+        #      - Retain self.structural_high as the new structural_high for the downtrend.
+        #      - Move the broken self.structural_low to self.previous_structural_low.
+        #      - Wait for the first valid Swing Low to form (candle high breaks previous high) and set it as the new self.structural_low.
+        #      - Log this "Change of Character" event.
+        #      - return
+        # 2. Check for Continuation:
+        #    - First, check if a new Swing High has been created (candle low breaks previous low).
+        #    - If so, and if it's the first swing high after a major breakout, instantly promote it to the new self.structural_high.
+        #    - Then, check if a Swing Low has been created.
+        #    - If so, check if the price has now broken above the current self.structural_high.
+        #    - If it has, promote the Swing Low to the new self.structural_low, confirming the trend.
+        #    - Log this "Continuation Confirmation" event.
+    
+    # ... _check_downtrend_logic would be the mirror image ...
+
+    def get_structure_at_timestamp(self, timestamp: pd.Timestamp) -> dict:
+        """
+        Returns the complete market structure state at a specific point in history.
+        """
+        # This method will search through the self.history log to reconstruct
+        # and return the state as a dictionary at the requested timestamp.
+        pass
+
+
+3. Class: DataFactory
+Purpose: To use the MarketStructureEngine to create the final labeled dataset.
+
+import pandas as pd
+
+class DataFactory:
+    """
+    Uses a MarketStructureEngine to perform a "hindsight" analysis and
+    generate a labeled dataset of images and features for AI training.
+    """
+
+    def __init__(self, engine: MarketStructureEngine, raw_data: pd.DataFrame):
+        self.engine = engine
+        self.raw_data = raw_data
+        self.labeled_samples = []
+
+    def generate_dataset(self, start_date, end_date):
+        """
+        The main orchestrator for the data generation workflow.
+        """
+        # PSEUDOCODE:
+        # 1. Get a list of all trading days between start_date and end_date.
+        # 2. for each day in trading_days:
+        # 3.   Define the pre-market (8:00 EST) and session (8:00-17:00 EST) time windows.
+        # 4.   session_outcome = self._find_session_outcome(session_data)
+        # 5.   setup_timestamp = the pre-market time for that day.
+        # 6.   self._capture_setup_image(setup_timestamp)
+        # 7.   all_levels = self._get_all_key_levels(setup_timestamp)
+        # 8.   
+        # 9.   if session_outcome is a breakout:
+        # 10.    catalyst_level = self._find_catalyst(...)
+        # 11.    for level in all_levels['candidates']:
+        # 12.      features = self._generate_full_feature_set(all_levels, level)
+        # 13.      label = 1 if level == catalyst_level else 0
+        # 14.      self.labeled_samples.append({'image': ..., 'features': ..., 'label': label})
+        # 15.  
+        # 16.  elif session_outcome == "Session_Rangebound":
+        # 17.    # Create a single sample for this day to teach the AI about non-breakout days.
+        # 18.    # The input will be the image and the full feature set.
+        # 19.    # The label will be a specific class, e.g., "Rangebound", distinct from Success/Failure.
+        # 20.    # This requires our AI model to be a multi-class classifier.
+        # 21.    features = self._generate_full_feature_set(all_levels, None)
+        # 22.    self.labeled_samples.append({'image': ..., 'features': features, 'label': 'Rangebound'})
+
+    def _get_all_key_levels(self, setup_timestamp: pd.Timestamp) -> dict:
+        """
+        Identifies all visible structural and "unswept" swing points.
+        """
+        # PSEUDOCODE:
+        # 1. Get the full structure from the engine at the timestamp.
+        # 2. Identify all internal swing highs and lows within the main structural range.
+        # 3. Apply the "unswept" filter:
+        #    - Discard any swing low if a newer swing low has formed at a lower price.
+        #    - Discard any swing high if a newer swing high has formed at a higher price.
+        # 4. Return a dictionary containing all key levels: {'structural_high': ..., 'candidates': [list_of_unswept_swings]}
+
+    def _generate_full_feature_set(self, all_levels: dict, current_candidate: dict = None) -> dict:
+        """
+        Calculates the full "battlefield map" of relative numerical features.
+        """
+        # PSEUDOCODE:
+        # 1. For each level in all_levels (Structural, Previous, Swing Candidates):
+        # 2.   Calculate its relative features:
+        # 3.     - distance_from_current_price = abs(level_price - current_price)
+        # 4.     - age_in_bars = current_index - level_creation_index
+        # 5.     - normalized_position_in_range = (level_price - structural_low) / (structural_high - structural_low)
+        # 6. Return a flat dictionary of all these features, e.g., {'sh_distance': 50, 'sl_distance': 100, ...}
+        pass
