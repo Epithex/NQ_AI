@@ -1,0 +1,107 @@
+# NQ_AI ViT-Base Hybrid Model Configuration
+# 87M parameter Google ViT-Base-Patch16-224 with numerical features
+
+# Data Configuration
+data:
+  source: "stooq"
+  ticker: "NQ.F"  # Stooq NQ futures symbol
+  timeframe: "daily"
+  bars_per_chart: 30  # 30 daily bars per chart (6 weeks context)
+  start_year: 2000
+  end_year: 2025
+  
+# Chart Generation
+chart:
+  width: 12
+  height: 8
+  dpi: 100
+  style: "yahoo"
+  prev_high_color: "green"
+  prev_low_color: "red"
+  line_width: 2
+  volume: false
+  title: true
+  
+# Pattern Classification (4-class system)
+classification:
+  num_classes: 4
+  labels:
+    1: "High Breakout"      # Daily high >= previous day high only
+    2: "Low Breakdown"      # Daily low <= previous day low only  
+    3: "Range Expansion"    # Both levels touched
+    4: "Range Bound"        # Neither level touched
+    
+# Numerical Features
+features:
+  numerical_features: 3
+  feature_names:
+    - "distance_to_prev_high"  # prev_high - open_price
+    - "distance_to_prev_low"   # open_price - prev_low
+    - "prev_day_range"         # prev_high - prev_low
+    
+# ViT-Base Model Configuration
+model:
+  # ViT-Base Architecture (Google)
+  name: "vit_base_patch16_224"
+  image_size: 224
+  patch_size: 16
+  hidden_size: 768          # ViT-Base hidden dimension
+  num_layers: 12            # ViT-Base transformer layers
+  num_heads: 12             # ViT-Base attention heads
+  mlp_dim: 3072             # ViT-Base MLP dimension
+  dropout_rate: 0.1
+  
+  # Training parameters
+  batch_size: 8             # Smaller batch for 87M params
+  learning_rate: 0.00005    # Lower LR for large model
+  epochs: 30                # Fewer epochs for large model
+  decay_steps: 1000
+  weight_decay: 0.01
+  
+  # Feature encoder for numerical features
+  feature_dense_units: 128
+  feature_output_dim: 64
+  
+  # Fusion layer for combining ViT features + numerical features
+  fusion_units: 512
+  fusion_dropout: 0.2
+    
+# Training Configuration
+training:
+  train_split: 0.8
+  use_class_weights: true
+  data_augmentation: false  # Charts should not be augmented
+  
+  # Early stopping
+  early_stopping_patience: 8
+  reduce_lr_patience: 4
+  
+  # Mixed precision for memory efficiency
+  mixed_precision: true
+  
+# File Paths
+paths:
+  data_root: "data"
+  images: "data/images"
+  labels: "data/labels"
+  metadata: "data/metadata"
+  models: "models"
+  outputs: "models/outputs"
+  checkpoints: "models/outputs/checkpoints"
+  logs_dir: "logs"
+  tensorboard_logs: "models/outputs/logs"
+  
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+# System Information
+system:
+  name: "NQ_AI ViT-Base Hybrid Model"
+  version: "1.0"
+  description: "ViT-Base-Patch16-224 (87M params) with numerical features for daily NQ pattern analysis"
+  architecture: "Google ViT-Base + Feature Fusion"
+  parameters: "87M (ViT-Base) + additional fusion layers"
+  data_period: "25 years (2000-2025)"
+  expected_samples: 6235

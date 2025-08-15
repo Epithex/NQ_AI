@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-NQ_AI ("AI Liquidity Analyst") is a specialized AI trading system for NASDAQ-100 E-mini futures (/NQ) that uses a hybrid visual and numerical approach to predict breakout success probabilities. The system analyzes pre-market conditions daily at 8 AM EST on the 4-hour chart (primary view), focusing on mechanical market structure identification and historical pattern recognition.
+NQ_AI is an AI trading system for NASDAQ-100 E-mini futures (/NQ) that analyzes daily price patterns using previous day levels. The system generates training data by capturing daily chart images with 30 bars of context and analyzing price action patterns.
 
-**Core Innovation**: Multi-class classification system that identifies:
-- **Success (1)**: Swing levels that will be swept leading to structural breakouts
-- **Failure (0)**: Swing levels that won't lead to successful breakouts  
-- **Rangebound (distinct class)**: Days with no significant breakouts ("no trade" conditions) - requires multi-class classifier architecture
+**Core Function**: Four-class classification system that predicts daily patterns:
+- **1**: High Breakout (Daily high >= previous day high only)
+- **2**: Low Breakdown (Daily low <= previous day low only)  
+- **3**: Range Expansion (Both levels touched during the day)
+- **4**: Range Bound (Neither level touched during the day)
 
 ## Development Commands
 
@@ -44,166 +45,155 @@ ruff check .
 - **Modularity**: Encapsulate logic in defined classes and methods
 - **No Hard-coding**: All parameters must be configurable
 - **Interactive Development**: Use Cursor IDE with Python Interactive Window feature (powered by Jupyter extension) for cell-by-cell execution within .py scripts
-- **Central Script**: Main implementation in `data_factory.py` developed interactively
+- **Central Script**: Main implementation in single script developed interactively
 - **Version Control**: Git repository with `.gitignore` for venv and large data files
 
-## High-Level Architecture
+## System Architecture
 
-The system implements a unique "hindsight" training methodology with four core components:
+The system implements a daily pattern analysis pipeline with four core components:
 
-### Market Structure Definitive Rules
-
-#### In Confirmed UPTREND:
-- **New Structural High Creation**: After current Structural High is broken, the very first Swing High formed is instantly promoted to new Structural High
-- **New Structural Low Creation**: A Swing Low (pullback) is only promoted to Structural Low when price breaks above the most recent Structural High (Continuation Confirmation)
-- **Termination (Change of Character)**: UPTREND terminates and flips to DOWNTREND the moment price breaks below current Structural Low
-  - Retain structural_high as new structural_high for downtrend
-  - Move broken structural_low to previous_structural_low
-  - Wait for first valid Swing Low to form and set as new structural_low
-
-#### In Confirmed DOWNTREND:
-- **New Structural Low Creation**: After current Structural Low is broken, the very first Swing Low formed is instantly promoted to new Structural Low
-- **New Structural High Creation**: A Swing High (pullback) is only promoted to Structural High when price breaks below the most recent Structural Low (Continuation Confirmation)
-- **Termination (Change of Character)**: DOWNTREND terminates and flips to UPTREND the moment price breaks above current Structural High
-  - Retain structural_low as new structural_low for uptrend
-  - Move broken structural_high to previous_structural_high
-  - Wait for first valid Swing High to form and set as new structural_high
-
-### 1. Market Structure Engine (Class: MarketStructureEngine)
-- Mechanical rule-based system for tracking trend states (UPTREND/DOWNTREND)
-- Identifies swing highs/lows using definitive pivot rules (candle high breaks previous high for swing low, candle low breaks previous low for swing high)
-- Maintains state variables: structural_high, structural_low, swing_high, swing_low, previous_structural_high/low
-- Initial state determination: Analyze recent data to find last completed swing high/low, treat as first Structural Range
+### 1. Daily Data Fetcher
+- Retrieves daily OHLC data for /NQ futures via yfinance
+- Generates chart images showing 30 daily bars with previous day levels
 - Key methods:
-  - `__init__(ohlc_data: pd.DataFrame)`: Initialize with price data and determine initial state
-  - `run_analysis()`: Main loop for bar-by-bar analysis
-  - `_check_uptrend_logic(index, candle)`: Apply uptrend rules including "Change of Character" and "Continuation Confirmation"
-  - `_check_downtrend_logic(index, candle)`: Apply downtrend rules (mirror of uptrend logic)
-  - `_find_swing_high(index)`: Detect swing high formation (candle low breaks previous low)
-  - `_find_swing_low(index)`: Detect swing low formation (candle high breaks previous high)
-  - `get_structure_at_timestamp(timestamp: pd.Timestamp) -> dict`: Retrieve historical state from history log
+  - `fetch_daily_data(start_date, end_date)`: Retrieve historical daily data
+  - `calculate_previous_day_levels(date)`: Calculate previous day's high and low
+  - `generate_numerical_features()`: Create distance and range features
 
-### 2. Data Factory (Class: DataFactory)
-- Works backward from successful breakouts or rangebound days ("hindsight" methodology)
-- Mines 5-day patterns leading to events
-- Generates multi-class training data from 2018-2022 period
-- For rangebound days: Creates single sample with full feature set but no specific candidate
+### 2. Daily Chart Generator
+- Creates training images showing 30 daily bars with previous day level lines
+- Draws previous day high as green horizontal line and previous day low as red horizontal line
+- Generates clean charts optimized for daily pattern recognition
 - Key methods:
-  - `generate_dataset(start_date, end_date)`: Main orchestrator for data generation workflow
-  - `_find_session_outcome(session_data)`: Scan session data (8:00-17:00 EST) to identify if major Structural High/Low was broken or if it was a range day
-  - `_find_catalyst(breakout_event)`: Work backward to locate the last swept swing level before major move
-  - `_capture_setup_image(setup_timestamp)`: Save clean, unaltered pre-market chart image
-  - `_get_all_key_levels(setup_timestamp)`: Find all visible structural and "unswept" swing levels (apply unswept filter logic)
-  - `_generate_full_feature_set(all_levels, candidate)`: Create complete "battlefield map" with relative features for ALL levels simultaneously
-  - `save_labels_to_csv()`: Export labeled dataset
+  - `create_daily_chart(data, prev_high, prev_low)`: Create chart with color-coded levels
+  - `save_chart_image(image, filename)`: Save chart image for training dataset
 
-### 3. Hybrid AI Model
-- **Visual Branch**: CNN for analyzing 5-day candlestick charts (4-hour timeframe)
-- **Numerical Branch**: Dense network for relative features of ALL key levels provided simultaneously (complete context)
-- **Fusion Layer**: Combines both branches for multi-class output
-- **Output Classes**: Multi-class classifier with Success (1), Failure (0), Rangebound (distinct class)
-- TensorFlow/Keras implementation with custom training pipeline
-- Model receives full "battlefield map" of all levels for each prediction
+### 3. Daily Pattern Analyzer
+- Analyzes single trading day to determine pattern classification
+- Compares daily high/low against previous day levels
+- Determines pattern type based on level interactions
+- Key methods:
+  - `analyze_daily_pattern(daily_data, prev_high, prev_low)`: Determine 4-class pattern
+  - `classify_pattern(high_touched, low_touched)`: Assign pattern label 1-4
 
-### 4. Live Deployment System
-- Daily execution at 8 AM EST before market open (9:30 AM)
-- Session window: 8:00-17:00 EST for analysis
-- Analyzes current market structure and recent patterns
-- Generates probability scores for all visible swing levels
-- Outputs ranked pre-market analysis with confidence scores
+### 4. Daily Dataset Creator
+- Orchestrates the complete daily data generation workflow
+- Creates training samples with chart images, numerical features, and pattern labels
+- Manages dataset organization for hybrid model training
+- Key methods:
+  - `generate_daily_dataset(start_date, end_date)`: Main workflow orchestrator
+  - `create_hybrid_sample(chart, features, label)`: Generate sample with images + features
+  - `export_hybrid_dataset()`: Save complete dataset for hybrid model training
 
 ## Key Technical Requirements
 
 ### Data Sources
-- **yfinance**: Primary source for /NQ futures data
-- **mplfinance**: Chart generation for visual model input (clean charts for AI, annotated charts for validation)
-- **5-minute timeframe**: For intraday analysis and precise entry/exit timing
-- **4-hour chart**: Primary analysis view for structural levels and AI predictions
+- **yfinance**: Primary source for /NQ futures daily data
+- **mplfinance**: Chart generation for visual model input
 
-### Time Windows & Data Splits
+### Daily Analysis Framework
+- **Chart Timeframe**: Daily bars
+- **Chart Duration**: 30 daily bars (approximately 6 weeks context) for each training image
+- **Pattern Analysis**: Compare daily high/low against previous day levels
+- **Previous Day Calculation**: High and low from prior trading day
 
-#### Trading Sessions
-- **Pre-market Analysis**: 8:00 AM EST (before market open)
-- **Session Window**: 8:00-17:00 EST (full analysis period)
-- **Market Open**: 9:30 AM EST (must complete analysis before this)
-
-#### Data Splits (Strict Separation)
-- **Training Set**: 2018-2022 (historical pattern mining)
-- **Validation Set**: 2023 (model tuning and selection)
-- **Test Set**: 2024-Present (final performance evaluation)
+### Data Splits (Strict Separation)
+- **Training Set**: 2000-2020 (20 years historical data)
+- **Validation Set**: 2021-2022 (2 years model tuning)
+- **Test Set**: 2023-2025 (3 years final evaluation)
+- **Total Dataset**: 6,235 samples spanning 25 years (2000-2025)
 - **No Data Leakage**: Strict temporal separation prevents look-ahead bias
 
-### Model Training Approach
-1. Historical pattern identification from training set
-2. Backward-looking data generation from successful breakouts
-3. Dual-path neural network training with validation monitoring
-4. Final evaluation on test set only
+### Pattern Classification Logic
+1. **Chart Generation**: Create 30-bar daily chart with color-coded previous day levels (green=high, red=low)
+2. **Feature Extraction**: Calculate 3 numerical features:
+   - Distance to previous high (prev_high - open_price)
+   - Distance to previous low (open_price - prev_low)  
+   - Previous day range (prev_high - prev_low)
+3. **Pattern Classification** (4-class system):
+   - **Label 1**: High Breakout (daily high >= previous day high only)
+   - **Label 2**: Low Breakdown (daily low <= previous day low only)
+   - **Label 3**: Range Expansion (both levels touched during the day)
+   - **Label 4**: Range Bound (neither level touched during the day)
 
-### Data Pipeline Details
+4. **Training Sample**:
+   - **Image**: 30-bar daily chart with color-coded previous day levels
+   - **Features**: 3 numerical features for additional context
+   - **Label**: Pattern classification (1-4)
 
-#### Hindsight Methodology Workflow
-1. **Find Outcome**: Scan historical data for successful structural breakouts or Session_Rangebound days
-2. **Identify Catalyst**: For breakouts, work backward to find the last swept swing level (the Actual Catalyst)
-3. **Capture Setup**: Save clean, unaltered pre-market chart image from event day (8:00 AM EST)
-4. **Identify All Candidates**: Find all visible internal, unswept swing highs and lows at pre-market time
-5. **Filter Candidates**: Apply "unswept" logic to swing levels:
-   - Discard swing lows if newer, lower swing lows exist (already swept)
-   - Discard swing highs if newer, higher swing highs exist (already swept)
-6. **Generate Labeled Samples**:
-   - Sample with Actual Catalyst level → Label: Success (1)
-   - Samples with other candidate levels → Label: Failure (0)
-   - Rangebound days → Single sample with full feature set → Label: Rangebound (distinct class)
+**Example**: Daily high reaches 15,105 (previous day high was 15,100) but daily low stays at 15,020 (previous day low was 15,000). Classification = Label 1 (High Breakout).
 
-#### Feature Engineering ("Battlefield Map")
-For each swing level candidate, calculate complete relative feature set:
-- `distance_from_current_price`: abs(level_price - current_price)
-- `age_in_bars`: current_index - level_creation_index  
-- `normalized_position_in_range`: (level_price - structural_low) / (structural_high - structural_low)
-- Relative distances to ALL other key levels (structural, previous structural, all swing candidates)
-- Complete context provided simultaneously to AI for each prediction
-- Returns flat dictionary format: {'sh_distance': 50, 'sl_distance': 100, ...}
-
-### Critical Implementation Rules
-- **No subjective interpretation**: All market structure rules must be mechanical
-- **Pre-market focus**: Analysis completes before 9:30 AM EST market open
-- **Probability ranking**: AI scores all swing levels, not binary predictions
-- **Historical validation**: Patterns must demonstrate statistical edge
-- **Unswept filter**: Only consider swing levels that haven't been superseded
-
-## Project Structure (To Be Implemented)
+## Project Structure
 
 ```
 /src
-  /market_structure    # Mechanical rule engine
-  /data_factory       # Historical pattern mining
-  /models             # Hybrid AI architecture
-  /deployment         # Live execution system
-  /utils              # Shared utilities
-/notebooks            # Jupyter development notebooks
-/data                 # Historical and live data storage
-/models               # Trained model artifacts
-/tests                # Unit and integration tests
+  daily_data_fetcher.py     # Fetch daily NQ futures data
+  daily_chart_generator.py  # Create 30-bar daily charts with levels
+  daily_pattern_analyzer.py # Analyze daily patterns for classification
+  daily_dataset_creator.py  # Generate complete daily dataset
+  hybrid_vit_model.py       # Custom hybrid ViT (3.49M params)
+  vit_base_hybrid_model.py  # ViT-Base hybrid (87M params)
+  daily_data_loader.py      # Load daily dataset for training
+  train_daily_model.py      # Train custom hybrid ViT
+  train_vit_base.py         # Train ViT-Base hybrid
+/data
+  /images                   # Generated daily chart images
+  /labels                   # Daily pattern labels and metadata
+  /metadata                 # Dataset summaries and manifests
+/models
+  /outputs                  # Model training artifacts and results
+/config
+  config.yaml               # Custom hybrid ViT configuration
+  config_vit_base.yaml      # ViT-Base hybrid configuration
 ```
 
-## Blueprint Documentation
+## Model Architectures
 
-Complete system specification available in:
-- `/Project Context/Blueprint/` - High-level strategic plan and core logic
-- `/Project Context/Code Reference and Implementation/` - Detailed pseudocode and class schemas
-- `/Project Context/Technical Blueprint/` - Complete technical schema and development guide
-- Focus on "hindsight" methodology and definitive rule system
-- Contains exact market structure definitions and AI architecture
+### 1. Custom Hybrid ViT (3.49M parameters)
+- 6 transformer blocks, 256 projection dim, 8 attention heads
+- Combines chart images + 3 numerical features
+- Optimized for daily pattern recognition
+- Fast training and inference
+
+### 2. ViT-Base Hybrid (87M parameters)  
+- Google ViT-Base-Patch16-224 architecture
+- 12 transformer layers, 768 hidden size, 12 attention heads
+- Combines chart images + 3 numerical features
+- Higher capacity for complex pattern learning
+- Longer training time, higher computational requirements
 
 ## Development Priorities
 
-1. **Market Structure Engine**: Implement mechanical rules first
-2. **Data Factory**: Build historical pattern extraction
-3. **Model Development**: Create and train hybrid architecture
-4. **Live System**: Deploy daily pre-market analysis
+1. **Daily Dataset**: 6,235 samples of daily patterns (2000-2025) ✅ COMPLETED
+2. **Custom Hybrid ViT**: Efficient 3.49M parameter model ✅ COMPLETED
+3. **ViT-Base Hybrid**: High-capacity 87M parameter model (IN PROGRESS)
+4. **Model Comparison**: Performance analysis of both architectures
 
-## Important Conventions
+## Important Implementation Notes
 
-- All market structure identification must use definitive, mechanical rules
-- Pattern analysis works backward from known successful outcomes
-- System focuses on probability assessment, not directional predictions
-- Daily analysis timing is critical - must complete before market open
+- **Chart Display**: Show 30 daily bars (approximately 6 weeks) of price action
+- **Level Visualization**: Draw previous day high (green) and low (red) as horizontal lines
+- **Pattern Analysis**: Compare current day high/low against previous day levels
+- **Hybrid Input**: Both models use chart images + 3 numerical features
+- **Simple Logic**: Focus only on previous day level interactions for pattern classification
+
+## Current Status
+
+✅ **Daily Dataset Generation**: Complete 25-year dataset with 6,235 samples (2000-2025)
+✅ **Custom Hybrid ViT**: 3.49M parameter model implemented and training ready
+🚧 **ViT-Base Hybrid**: 87M parameter model implementation in progress
+⏳ **Model Comparison**: Performance evaluation pending completion of both models
+
+## Usage
+
+```bash
+# Train custom hybrid ViT (3.49M params)
+python src/train_daily_model.py
+
+# Train ViT-Base hybrid (87M params) 
+python src/train_vit_base.py --model base
+
+# Model selection via config
+python src/train_vit_base.py --config config_vit_base.yaml
+```
+
