@@ -1,0 +1,127 @@
+# NQ_AI Pure Visual ViT-Base Model Configuration
+# 87M parameter Google ViT-Base-Patch16-224 for pure visual learning across multiple instruments
+
+# Multi-Instrument Data Configuration
+data:
+  instruments:
+    - "NQ.F"    # NASDAQ-100 E-mini futures (primary)
+    - "ES.F"    # S&P 500 E-mini futures (high correlation)
+    - "YM.F"    # Dow Jones E-mini futures (pattern diversity)
+  source: "stooq"
+  fallback_source: "yfinance"
+  timeframe: "daily"
+  bars_per_chart: 30  # 30 daily bars per chart (6 weeks context)
+  start_year: 2000
+  end_year: 2025
+  
+# Pure Visual Chart Generation
+chart:
+  width: 12
+  height: 8
+  dpi: 100
+  image_size: 224        # ViT-Base input size
+  style: "yahoo"
+  prev_high_color: "green"
+  prev_low_color: "red"
+  line_width: 2
+  volume: false
+  title: false           # Clean visual appearance
+  grid: false            # No grid for cleaner charts
+  axes_labels: false     # No text overlays
+  
+# Pattern Classification (4-class system)
+classification:
+  num_classes: 4
+  labels:
+    1: "High Breakout"      # Daily high >= previous day high only
+    2: "Low Breakdown"      # Daily low <= previous day low only  
+    3: "Range Expansion"    # Both levels touched
+    4: "Range Bound"        # Neither level touched
+    
+# Pure Visual Configuration (No Numerical Features)
+features:
+  numerical_features: 0   # Pure visual approach
+  feature_names: []       # No numerical features
+    
+# ViT-Base Model Configuration (Pure Visual)
+model:
+  # ViT-Base Architecture (Google)
+  name: "vit_base_patch16_224"
+  image_size: 224
+  patch_size: 16
+  hidden_size: 768          # ViT-Base hidden dimension
+  num_layers: 12            # ViT-Base transformer layers
+  num_heads: 12             # ViT-Base attention heads
+  mlp_dim: 3072             # ViT-Base MLP dimension
+  dropout_rate: 0.15        # Increased for larger dataset
+  
+  # Training parameters (Multi-Instrument Optimized)
+  batch_size: 16            # Increased for pure visual (no numerical bottleneck)
+  learning_rate: 0.0001     # Standard ViT-Base learning rate
+  epochs: 50                # More epochs for larger dataset
+  weight_decay: 0.01
+  
+  # Pure Visual Mode
+  visual_only: true         # Pure visual learning
+  use_feature_fusion: false # No numerical feature fusion
+    
+# Training Configuration (Multi-Instrument)
+training:
+  # Data splits (across all instruments)
+  train_split: 0.8          # 80% training (~16K samples)
+  val_split: 0.1            # 10% validation (~2K samples)  
+  test_split: 0.1           # 10% test (~2K samples)
+  
+  use_class_weights: true   # Handle class imbalance
+  data_augmentation: false  # No augmentation for financial charts
+  
+  # Training optimizations
+  mixed_precision: false    # Disabled for stability
+  gradient_clipping: true   # Stabilize training
+  gradient_clip_norm: 1.0
+  
+  # Learning rate scheduling
+  lr_scheduling: true
+  lr_schedule: "cosine_decay"
+  warmup_epochs: 5
+  
+  # Early stopping and checkpointing
+  early_stopping: true
+  early_stopping_patience: 10
+  checkpoint_frequency: 5   # Save every 5 epochs
+  
+# Multi-Instrument Dataset Configuration
+dataset:
+  combine_instruments: true     # Train on combined dataset
+  stratify_by_instrument: false # Mix instruments in splits
+  expected_total_samples: 20000 # Approximate total across all instruments
+  min_samples_per_instrument: 6000  # Minimum samples per instrument
+  
+# File Paths
+paths:
+  data_root: "data"
+  images: "data/images"
+  labels: "data/labels"
+  metadata: "data/metadata"
+  models: "models"
+  outputs: "models/outputs"
+  checkpoints: "models/outputs/checkpoints"
+  logs_dir: "logs"
+  tensorboard_logs: "models/outputs/logs"
+  
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+# System Information
+system:
+  name: "NQ_AI Pure Visual ViT-Base Model"
+  version: "2.0"
+  description: "Pure visual ViT-Base-Patch16-224 (87M params) for multi-instrument daily pattern analysis"
+  architecture: "Google ViT-Base (Pure Visual)"
+  parameters: "87M (ViT-Base visual only)"
+  instruments: "NQ, ES, YM futures"
+  data_period: "25 years (2000-2025)"
+  expected_samples: 20000
+  approach: "Pure visual learning - no numerical features"

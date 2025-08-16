@@ -31,15 +31,12 @@ classification:
     3: "Range Expansion"    # Both levels touched
     4: "Range Bound"        # Neither level touched
     
-# Numerical Features
+# Numerical Features (Disabled for Pure Visual Mode)
 features:
-  numerical_features: 3
-  feature_names:
-    - "distance_to_prev_high"  # prev_high - open_price
-    - "distance_to_prev_low"   # open_price - prev_low
-    - "prev_day_range"         # prev_high - prev_low
+  numerical_features: 0
+  feature_names: []
     
-# ViT-Base Model Configuration
+# ViT-Base Model Configuration (RunPod Optimized)
 model:
   # ViT-Base Architecture (Google)
   name: "vit_base_patch16_224"
@@ -51,33 +48,30 @@ model:
   mlp_dim: 3072             # ViT-Base MLP dimension
   dropout_rate: 0.1
   
-  # Training parameters
-  batch_size: 8             # Smaller batch for 87M params
-  learning_rate: 0.00005    # Lower LR for large model
-  epochs: 30                # Fewer epochs for large model
-  decay_steps: 1000
+  # RunPod Training parameters (No Early Stopping)
+  batch_size: 8             # Optimal batch size for pure visual
+  learning_rate: 0.0001     # Constant LR, no scheduling
+  epochs: 30                # Fixed 30 epochs, no early stopping
   weight_decay: 0.01
   
-  # Feature encoder for numerical features
-  feature_dense_units: 128
-  feature_output_dim: 64
-  
-  # Fusion layer for combining ViT features + numerical features
-  fusion_units: 512
-  fusion_dropout: 0.2
+  # Pure Visual Mode (No Feature Fusion)
+  visual_only: true         # Disable numerical features
+  use_feature_fusion: false # Pure ViT-Base visual learning
     
-# Training Configuration
+# Training Configuration (RunPod No-Stop Mode)
 training:
   train_split: 0.8
   use_class_weights: true
   data_augmentation: false  # Charts should not be augmented
   
-  # Early stopping
-  early_stopping_patience: 8
-  reduce_lr_patience: 4
+  # RunPod Optimizations
+  mixed_precision: false    # Disabled for float64 training
+  gradient_clipping: true   # Stabilize training on cloud GPU
+  checkpoint_frequency: 5   # Save every 5 epochs for RunPod
   
-  # Mixed precision for memory efficiency
-  mixed_precision: true
+  # No Early Stopping - Complete 30 Epochs
+  early_stopping: false    # DISABLED for pure visual training
+  lr_scheduling: false     # DISABLED - constant learning rate
   
 # File Paths
 paths:

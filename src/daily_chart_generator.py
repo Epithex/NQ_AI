@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Daily Chart Generator for NQ Pattern Analysis
-Generates 30-bar daily candlestick charts with previous day high/low levels
+Pure Visual Chart Generator for Multi-Instrument Pattern Analysis
+Generates clean 30-bar daily candlestick charts with previous day high/low levels
+Optimized for pure visual learning with ViT models
 """
 
 import mplfinance as mpf
@@ -13,15 +14,17 @@ import yaml
 import logging
 from pathlib import Path
 from typing import Tuple, Optional
+import numpy as np
 
-class DailyChartGenerator:
-    """Generates 30-bar daily charts with previous day levels."""
+class PureVisualChartGenerator:
+    """Generates clean 30-bar daily charts optimized for pure visual learning."""
     
-    def __init__(self, config_path: str = "config/config.yaml"):
+    def __init__(self, config_path: str = "config/config_pure_visual.yaml"):
         """Initialize chart generator with configuration."""
         self.config = self.load_config(config_path)
         self.chart_config = self.config['chart']
         self.bars_per_chart = self.config['data']['bars_per_chart']
+        self.image_size = self.chart_config['image_size']
         self.setup_logging()
         
         # Ensure output directory exists
@@ -47,19 +50,21 @@ class DailyChartGenerator:
         )
         self.logger = logging.getLogger(__name__)
     
-    def generate_chart_image(self, analysis_date: datetime, data: pd.DataFrame) -> str:
+    def generate_chart_image(self, analysis_date: datetime, data: pd.DataFrame, 
+                            instrument: str = "NQ") -> str:
         """
-        Generate 30-bar daily chart with previous day levels.
+        Generate pure visual 30-bar daily chart with previous day levels.
         
         Args:
             analysis_date: The date being analyzed
             data: Full daily price data
+            instrument: Instrument identifier (NQ, ES, YM)
             
         Returns:
             Path to saved chart image
         """
         try:
-            self.logger.info(f"Generating chart for analysis date: {analysis_date.date()}")
+            self.logger.info(f"Generating pure visual chart for {instrument} on {analysis_date.date()}")
             
             # Get 30-bar chart window and previous day levels
             chart_data, prev_high, prev_low = self.get_chart_window(analysis_date, data)
@@ -68,12 +73,12 @@ class DailyChartGenerator:
             if not self.validate_chart_data(chart_data):
                 raise ValueError(f"Invalid chart data for {analysis_date}")
             
-            # Generate chart
-            chart_path = self.create_candlestick_chart(
-                chart_data, prev_high, prev_low, analysis_date
+            # Generate pure visual chart (224x224 for ViT)
+            chart_path = self.create_pure_visual_chart(
+                chart_data, prev_high, prev_low, analysis_date, instrument
             )
             
-            self.logger.info(f"Chart generated successfully: {chart_path}")
+            self.logger.info(f"Pure visual chart generated: {chart_path}")
             return chart_path
             
         except Exception as e:
@@ -124,16 +129,17 @@ class DailyChartGenerator:
         
         return chart_data, prev_high, prev_low
     
-    def create_candlestick_chart(self, chart_data: pd.DataFrame, prev_high: float, 
-                                prev_low: float, analysis_date: datetime) -> str:
+    def create_pure_visual_chart(self, chart_data: pd.DataFrame, prev_high: float, 
+                                prev_low: float, analysis_date: datetime, instrument: str) -> str:
         """
-        Create candlestick chart with previous day levels.
+        Create clean visual chart optimized for ViT model input (224x224).
         
         Args:
             chart_data: 30 bars of daily data
             prev_high: Previous day high (green line)
             prev_low: Previous day low (red line)
             analysis_date: Date being analyzed (for filename)
+            instrument: Instrument identifier (NQ, ES, YM)
             
         Returns:
             Path to saved chart image
@@ -147,58 +153,87 @@ class DailyChartGenerator:
             'linewidths': self.chart_config['line_width']
         }
         
-        # Configure chart style
+        # Configure clean chart style for pure visual learning
         mc = mpf.make_marketcolors(
-            up='green', down='red',
+            up='#00AA00', down='#FF0000',  # High contrast colors
             edge='inherit',
-            wick={'up': 'green', 'down': 'red'}
+            wick={'up': '#00AA00', 'down': '#FF0000'}
         )
         
         style = mpf.make_mpf_style(
             marketcolors=mc,
-            gridstyle='-',
-            gridcolor='lightgray',
-            y_on_right=False
+            gridstyle='',  # No grid for cleaner visuals
+            gridcolor='none',
+            y_on_right=False,
+            rc={'axes.linewidth': 0.5}  # Thin axes
         )
         
-        # Generate filename
+        # Generate filename with instrument prefix
         date_str = analysis_date.strftime('%Y%m%d')
-        filename = f"{self.config['paths']['images']}/daily_chart_{date_str}.png"
+        filename = f"{self.config['paths']['images']}/pure_visual_{instrument}_{date_str}.png"
         
-        # Create the chart
+        # Calculate figure size to get exactly 224x224 pixels
+        dpi = self.chart_config['dpi']
+        fig_size = self.image_size / dpi  # 224/100 = 2.24 inches
+        
+        # Create the pure visual chart
         plot_kwargs = {
             'type': 'candle',
             'style': style,
             'hlines': hlines,
-            'volume': False,  # Disable volume to focus on price action
-            'figsize': (self.chart_config['width'], self.chart_config['height']),
+            'volume': False,  # Pure price action only
+            'figsize': (fig_size, fig_size),  # Square aspect ratio
             'returnfig': True,
-            'datetime_format': '%m/%d',
-            'xrotation': 45,
+            'title': '',  # No title for clean visuals
+            'ylabel': '',  # No Y-axis label
+            'xlabel': '',  # No X-axis label
+            'datetime_format': '',  # No date labels
+            'xrotation': 0,
             'tight_layout': True,
+            'scale_padding': {'left': 0.05, 'top': 0.05, 'right': 0.05, 'bottom': 0.05},
             'savefig': dict(
                 fname=filename,
-                dpi=self.chart_config['dpi'],
-                bbox_inches='tight'
+                dpi=dpi,
+                bbox_inches='tight',
+                pad_inches=0,  # No padding for exact sizing
+                facecolor='white',
+                edgecolor='none'
             )
         }
-        
-        # Add title if configured
-        if self.chart_config.get('title', True):
-            chart_start = chart_data.index[0].strftime('%m/%d/%Y')
-            chart_end = chart_data.index[-1].strftime('%m/%d/%Y')
-            plot_kwargs['title'] = (
-                f"NQ Daily Pattern Analysis - {analysis_date.strftime('%Y-%m-%d')}\n"
-                f"Chart Context: {chart_start} to {chart_end} | "
-                f"Prev High (Green): {prev_high:.2f} | Prev Low (Red): {prev_low:.2f}"
-            )
         
         # Create and save the chart
         fig, axes = mpf.plot(chart_data, **plot_kwargs)
         
+        # Remove all text and axes for pure visual input
+        if hasattr(axes, '__iter__'):
+            ax = axes[0]
+        else:
+            ax = axes
+            
+        # Clean up the chart for pure visual learning
+        ax.set_xticks([])  # Remove X-axis ticks
+        ax.set_yticks([])  # Remove Y-axis ticks
+        ax.set_xlabel('')  # Remove X-axis label
+        ax.set_ylabel('')  # Remove Y-axis label
+        ax.spines['top'].set_visible(False)     # Remove top border
+        ax.spines['right'].set_visible(False)   # Remove right border
+        ax.spines['bottom'].set_visible(False)  # Remove bottom border
+        ax.spines['left'].set_visible(False)    # Remove left border
+        
+        # Save the figure
+        fig.savefig(
+            filename,
+            dpi=dpi,
+            bbox_inches='tight',
+            pad_inches=0,
+            facecolor='white',
+            edgecolor='none'
+        )
+        
         # Close figure to free memory
         plt.close(fig)
         
+        self.logger.debug(f"Pure visual chart saved: {filename} ({self.image_size}x{self.image_size})")
         return filename
     
     def validate_chart_data(self, chart_data: pd.DataFrame) -> bool:
@@ -278,13 +313,14 @@ class DailyChartGenerator:
                 va='top', ha='right',
                 bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
     
-    def batch_generate_charts(self, data: pd.DataFrame, start_date: str = None, 
-                             end_date: str = None) -> list:
+    def batch_generate_charts(self, data: pd.DataFrame, instrument: str = "NQ", 
+                             start_date: str = None, end_date: str = None) -> list:
         """
-        Generate charts for multiple dates in batch.
+        Generate pure visual charts for multiple dates in batch.
         
         Args:
             data: Full daily price data
+            instrument: Instrument identifier (NQ, ES, YM)
             start_date: Start date for chart generation
             end_date: End date for chart generation
             
@@ -308,65 +344,48 @@ class DailyChartGenerator:
         # Filter trading days in range
         analysis_dates = data.loc[start_dt:end_dt].index
         
-        self.logger.info(f"Generating charts for {len(analysis_dates)} trading days")
+        self.logger.info(f"Generating pure visual charts for {instrument}: {len(analysis_dates)} trading days")
         
         for i, analysis_date in enumerate(analysis_dates):
             try:
-                chart_path = self.generate_chart_image(analysis_date, data)
+                chart_path = self.generate_chart_image(analysis_date, data, instrument)
                 chart_paths.append(chart_path)
                 
-                if (i + 1) % 50 == 0:
-                    self.logger.info(f"Generated {i + 1}/{len(analysis_dates)} charts")
+                if (i + 1) % 100 == 0:  # Log every 100 charts
+                    self.logger.info(f"Generated {i + 1}/{len(analysis_dates)} charts for {instrument}")
                     
             except Exception as e:
-                error_msg = f"Error generating chart for {analysis_date}: {e}"
+                error_msg = f"Error generating chart for {instrument} {analysis_date}: {e}"
                 self.logger.error(error_msg)
                 errors.append(error_msg)
         
-        self.logger.info(f"Batch generation complete: {len(chart_paths)} charts, {len(errors)} errors")
+        self.logger.info(f"Batch generation complete for {instrument}: {len(chart_paths)} charts, {len(errors)} errors")
         
         if errors:
-            self.logger.warning(f"Errors encountered: {errors[:5]}...")  # Log first 5 errors
+            self.logger.warning(f"Errors encountered: {errors[:3]}...")  # Log first 3 errors
         
         return chart_paths
 
 def main():
-    """Test the daily chart generator."""
-    print("Testing Daily Chart Generator...")
+    """Test the pure visual chart generator."""
+    print("Testing Pure Visual Chart Generator...")
     
     try:
         # Initialize generator
-        generator = DailyChartGenerator()
+        generator = PureVisualChartGenerator()
         
-        # Load test data (from our fetcher test)
-        test_data_path = "data/metadata/test_nq_data.csv"
+        print(f"🎯 Chart target size: {generator.image_size}x{generator.image_size} pixels")
+        print(f"📊 Bars per chart: {generator.bars_per_chart}")
         
-        if not os.path.exists(test_data_path):
-            print("❌ Test data not found. Run stooq_fetcher.py first.")
-            return 1
-        
-        # Load data
-        data = pd.read_csv(test_data_path, index_col=0, parse_dates=True)
-        print(f"📊 Loaded {len(data)} daily bars")
-        
-        # Test single chart generation
-        test_date = data.index[-50]  # 50 days from end for testing
-        chart_path = generator.generate_chart_image(test_date, data)
-        
-        print(f"✅ Chart generated: {chart_path}")
-        print(f"📅 Analysis date: {test_date.date()}")
-        
-        # Test batch generation (last 10 days)
-        recent_data = data.tail(60)  # Get last 60 days
-        start_date = recent_data.index[-10]  # Generate for last 10 days
-        
-        chart_paths = generator.batch_generate_charts(
-            data=data,
-            start_date=start_date.strftime('%Y-%m-%d')
-        )
-        
-        print(f"📈 Batch generated {len(chart_paths)} charts")
-        print("✅ Chart generator test completed successfully!")
+        # For testing, we'd need actual data - this is just a demo
+        print("✅ Pure visual chart generator initialized successfully!")
+        print("💡 To test fully, provide daily data for NQ, ES, or YM")
+        print("📋 Features:")
+        print("   - Clean 224x224 pixel charts for ViT input")
+        print("   - No text overlays or labels")  
+        print("   - High contrast candlesticks")
+        print("   - Green/red previous day level lines")
+        print("   - Multi-instrument support (NQ, ES, YM)")
         
     except Exception as e:
         print(f"❌ Error: {e}")

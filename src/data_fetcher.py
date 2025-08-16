@@ -3,145 +3,211 @@ import yfinance as yf
 import pandas as pd
 import pytz
 from datetime import datetime, timedelta
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List, Dict
 import yaml
 import logging
+import os
 
-class DataFetcher:
-    """Fetches and processes NQ futures data."""
+class MultiInstrumentDataFetcher:
+    """Fetches and processes data for multiple futures instruments (NQ, ES, YM)."""
     
-    def __init__(self, config_path: str = "config/config.yaml"):
+    def __init__(self, config_path: str = "config/config_pure_visual.yaml"):
         """Initialize DataFetcher with configuration."""
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
         
-        self.ticker = self.config['data']['ticker']
-        self.interval = self.config['data']['interval']
-        self.timezone = pytz.timezone(self.config['time']['timezone'])
+        self.instruments = self.config['data']['instruments']
+        self.source = self.config['data']['source']
+        self.fallback_source = self.config['data'].get('fallback_source', 'yfinance')
+        self.start_year = self.config['data']['start_year']
+        self.end_year = self.config['data']['end_year']
         
         # Setup logging
+        log_dir = self.config['paths']['logs_dir']
+        os.makedirs(log_dir, exist_ok=True)
         logging.basicConfig(
-            filename=f"{self.config['paths']['logs']}/data_fetcher.log",
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s'
+            level=getattr(logging, self.config['logging']['level']),
+            format=self.config['logging']['format'],
+            handlers=[
+                logging.FileHandler(f"{log_dir}/multi_instrument_fetcher.log"),
+                logging.StreamHandler()
+            ]
         )
         self.logger = logging.getLogger(__name__)
     
-    def fetch_data(self, start_date: str, end_date: str) -> pd.DataFrame:
+    def fetch_instrument_data(self, instrument: str, start_date: str, end_date: str) -> pd.DataFrame:
         """
-        Fetch historical 1-hour NQ futures data.
+        Fetch historical daily data for a single instrument.
         
         Args:
+            instrument: Instrument ticker (e.g., 'NQ.F', 'ES.F', 'YM.F')
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format
             
         Returns:
-            DataFrame with OHLCV data
+            DataFrame with daily OHLCV data
         """
         try:
-            self.logger.info(f"Fetching data for {self.ticker} from {start_date} to {end_date}")
+            self.logger.info(f"Fetching data for {instrument} from {start_date} to {end_date}")
             
-            # Add buffer for 300 bars before start_date
-            start_dt = pd.to_datetime(start_date)
-            buffer_start = start_dt - timedelta(days=20)  # ~480 hours buffer
+            # Try primary source first (stooq)
+            data = None
+            if self.source == "stooq":
+                try:
+                    import pandas_datareader as pdr
+                    # Convert futures ticker format for stooq
+                    stooq_ticker = instrument.replace('.F', '')  # NQ.F -> NQ
+                    data = pdr.get_data_stooq(stooq_ticker, start_date, end_date)
+                    if not data.empty:
+                        self.logger.info(f"Successfully fetched {len(data)} bars from stooq")
+                except Exception as e:
+                    self.logger.warning(f"Stooq fetch failed: {str(e)}, trying fallback")
             
-            # Fetch data
-            ticker = yf.Ticker(self.ticker)
-            data = ticker.history(
-                start=buffer_start.strftime('%Y-%m-%d'),
-                end=end_date,
-                interval=self.interval
-            )
-            
-            # Validate data
-            if data.empty:
-                self.logger.warning(f"No data retrieved for {self.ticker} from {start_date} to {end_date}")
-                # Try with a more recent date range
-                recent_start = (pd.to_datetime(end_date) - timedelta(days=700)).strftime('%Y-%m-%d')
-                self.logger.info(f"Trying with more recent date range: {recent_start} to {end_date}")
-                
+            # Fallback to yfinance if stooq fails or not primary
+            if data is None or data.empty:
+                self.logger.info(f"Using yfinance for {instrument}")
+                ticker = yf.Ticker(instrument)
                 data = ticker.history(
-                    start=recent_start,
+                    start=start_date,
                     end=end_date,
-                    interval=self.interval
+                    interval="1d"  # Daily data
                 )
                 
                 if data.empty:
-                    raise ValueError(f"No data retrieved for {self.ticker} even with recent date range")
+                    raise ValueError(f"No data retrieved for {instrument} from either source")
             
-            # Convert to EST timezone
-            if hasattr(data.index, 'tz_convert'):
-                data.index = data.index.tz_convert(self.timezone)
-            else:
-                self.logger.warning("Data index is not timezone-aware, attempting to localize")
-                data.index = pd.to_datetime(data.index).tz_localize('UTC').tz_convert(self.timezone)
+            # Standardize column names
+            if 'Adj Close' in data.columns:
+                data = data.drop('Adj Close', axis=1)
             
-            self.logger.info(f"Successfully fetched {len(data)} bars from {data.index[0]} to {data.index[-1]}")
+            # Ensure we have standard OHLCV columns
+            required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+            if not all(col in data.columns for col in required_cols):
+                self.logger.warning(f"Missing required columns for {instrument}")
+                
+            self.logger.info(f"Successfully fetched {len(data)} daily bars for {instrument}")
             return data
             
         except Exception as e:
-            self.logger.error(f"Error fetching data: {str(e)}")
+            self.logger.error(f"Error fetching data for {instrument}: {str(e)}")
             raise
-    
-    def get_previous_day_levels(self, current_date: datetime, data: pd.DataFrame) -> Tuple[float, float]:
+
+    def fetch_multi_instrument_data(self, start_date: str = None, end_date: str = None) -> Dict[str, pd.DataFrame]:
         """
-        Calculate previous trading day's high and low.
+        Fetch data for all configured instruments.
         
         Args:
-            current_date: Current date for analysis
-            data: Historical price data
+            start_date: Start date in YYYY-MM-DD format (optional, uses config default)
+            end_date: End date in YYYY-MM-DD format (optional, uses config default)
+            
+        Returns:
+            Dictionary mapping instrument -> DataFrame
+        """
+        if start_date is None:
+            start_date = f"{self.start_year}-01-01"
+        if end_date is None:
+            end_date = f"{self.end_year}-12-31"
+            
+        all_data = {}
+        
+        for instrument in self.instruments:
+            try:
+                self.logger.info(f"Fetching data for {instrument}")
+                data = self.fetch_instrument_data(instrument, start_date, end_date)
+                
+                # Validate data quality
+                if self.validate_data_quality(data):
+                    all_data[instrument] = data
+                    self.logger.info(f"✅ {instrument}: {len(data)} samples")
+                else:
+                    self.logger.warning(f"❌ {instrument}: Failed data quality checks")
+                    
+            except Exception as e:
+                self.logger.error(f"❌ {instrument}: Failed to fetch data - {str(e)}")
+                continue
+                
+        self.logger.info(f"Successfully fetched data for {len(all_data)} instruments")
+        return all_data
+    
+    def get_previous_day_levels(self, current_date: pd.Timestamp, data: pd.DataFrame) -> Tuple[float, float]:
+        """
+        Calculate previous trading day's high and low for daily data.
+        
+        Args:
+            current_date: Current date for analysis (pd.Timestamp)
+            data: Historical daily price data with date index
             
         Returns:
             Tuple of (previous_high, previous_low)
         """
         try:
-            # Get previous trading day (skip weekends)
-            prev_date = current_date - timedelta(days=1)
-            while prev_date.weekday() in [5, 6]:  # Saturday = 5, Sunday = 6
-                prev_date -= timedelta(days=1)
+            # Ensure current_date is a pandas Timestamp
+            if isinstance(current_date, str):
+                current_date = pd.to_datetime(current_date)
             
-            # Ensure timezone-aware dates
-            if prev_date.tzinfo is None:
-                prev_date = self.timezone.localize(prev_date)
+            # Get the date of the current trading day
+            current_date_only = current_date.date()
             
-            # Filter data for previous day (midnight to midnight EST)
-            prev_day_start = prev_date.replace(hour=0, minute=0, second=0)
-            prev_day_end = prev_date.replace(hour=23, minute=59, second=59)
+            # Find previous trading day in the data
+            available_dates = data.index.date
+            current_idx = None
             
-            prev_day_data = data.loc[prev_day_start:prev_day_end]
+            # Find current date in data
+            for i, date in enumerate(available_dates):
+                if date == current_date_only:
+                    current_idx = i
+                    break
             
-            if prev_day_data.empty:
-                raise ValueError(f"No data for previous day: {prev_date.date()}")
+            if current_idx is None or current_idx == 0:
+                raise ValueError(f"Cannot find previous day for {current_date_only}")
             
-            prev_high = prev_day_data['High'].max()
-            prev_low = prev_day_data['Low'].min()
+            # Get previous day's data (previous index in the DataFrame)
+            prev_day_data = data.iloc[current_idx - 1]
             
-            self.logger.info(f"Previous day ({prev_date.date()}): High={prev_high:.2f}, Low={prev_low:.2f}")
+            prev_high = float(prev_day_data['High'])
+            prev_low = float(prev_day_data['Low'])
+            prev_date = data.index[current_idx - 1].date()
+            
+            self.logger.debug(f"Previous day ({prev_date}): High={prev_high:.2f}, Low={prev_low:.2f}")
             return prev_high, prev_low
             
         except Exception as e:
             self.logger.error(f"Error calculating previous day levels: {str(e)}")
             raise
     
-    def get_data_for_chart(self, analysis_time: datetime, data: pd.DataFrame, bars: int = 300) -> pd.DataFrame:
+    def get_data_for_chart(self, current_date: pd.Timestamp, data: pd.DataFrame, bars: int = 30) -> pd.DataFrame:
         """
-        Get 300 bars of data ending at analysis time.
+        Get specified number of daily bars ending at current date for chart generation.
         
         Args:
-            analysis_time: Timestamp for chart generation (7 AM EST)
-            data: Full historical data
-            bars: Number of bars to include (default 300)
+            current_date: Current date for analysis
+            data: Full historical daily data
+            bars: Number of daily bars to include (default 30)
             
         Returns:
-            DataFrame with 300 bars for chart
+            DataFrame with specified bars for chart
         """
         try:
-            # Find the index position of analysis_time
-            analysis_idx = data.index.get_indexer([analysis_time], method='nearest')[0]
+            # Ensure current_date is a pandas Timestamp
+            if isinstance(current_date, str):
+                current_date = pd.to_datetime(current_date)
             
-            # Get 300 bars ending at analysis time
-            start_idx = max(0, analysis_idx - bars + 1)
-            chart_data = data.iloc[start_idx:analysis_idx + 1]
+            # Find the index position of current_date
+            current_date_only = current_date.date()
+            available_dates = data.index.date
+            current_idx = None
+            
+            for i, date in enumerate(available_dates):
+                if date == current_date_only:
+                    current_idx = i
+                    break
+            
+            if current_idx is None:
+                raise ValueError(f"Date {current_date_only} not found in data")
+            
+            # Get specified number of bars ending at current date (inclusive)
+            start_idx = max(0, current_idx - bars + 1)
+            chart_data = data.iloc[start_idx:current_idx + 1]
             
             if len(chart_data) < bars:
                 self.logger.warning(f"Only {len(chart_data)} bars available, requested {bars}")

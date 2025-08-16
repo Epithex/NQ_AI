@@ -1,0 +1,98 @@
+# Pure Visual ViT-Base Configuration
+# Images only - no numerical features
+
+# Data Configuration
+data:
+  source: "stooq"
+  ticker: "NQ.F"
+  timeframe: "daily"
+  bars_per_chart: 30
+  start_year: 2000
+  end_year: 2025
+  
+# Chart Generation (already done)
+chart:
+  width: 12
+  height: 8
+  dpi: 100
+  style: "yahoo"
+  prev_high_color: "green"
+  prev_low_color: "red"
+  line_width: 2
+  volume: false
+  title: true
+  
+# Pattern Classification (4-class system)
+classification:
+  num_classes: 4
+  labels:
+    1: "High Breakout"      # Daily high >= previous day high only
+    2: "Low Breakdown"      # Daily low <= previous day low only  
+    3: "Range Expansion"    # Both levels touched
+    4: "Range Bound"        # Neither level touched
+    
+# Pure Visual ViT-Base Model Configuration
+model:
+  # ViT-Base Architecture (Google)
+  name: "vit_base_patch16_224_visual"
+  image_size: 224
+  patch_size: 16
+  hidden_size: 768          # ViT-Base hidden dimension
+  num_layers: 12            # ViT-Base transformer layers
+  num_heads: 12             # ViT-Base attention heads
+  mlp_dim: 3072             # ViT-Base MLP dimension
+  dropout_rate: 0.3         # Classifier dropout only
+  
+  # Training parameters
+  batch_size: 16            # Optimal for 87M params
+  learning_rate: 0.0003     # 3e-4 proven for ViT fine-tuning
+  epochs: 30                # Allow full convergence
+  weight_decay: 0.01        # AdamW weight decay
+  
+  # NO NUMERICAL FEATURES - Pure visual input only
+  pure_visual: true
+    
+# Training Configuration
+training:
+  train_split: 0.6          # 60% training
+  val_split: 0.2            # 20% validation  
+  test_split: 0.2           # 20% testing
+  use_class_weights: true   # Balance imbalanced dataset
+  data_augmentation: false  # NO AUGMENTATION - keep charts clean
+  
+  # Early stopping and scheduling
+  early_stopping_patience: 8
+  reduce_lr_patience: 4
+  monitor_metric: "val_accuracy"
+  
+  # Pure visual approach - no mixed precision for simplicity
+  mixed_precision: false
+  
+# File Paths
+paths:
+  data_root: "data"
+  images: "data/images"
+  labels: "data/labels"
+  metadata: "data/metadata"
+  models: "models"
+  outputs: "models/outputs"
+  checkpoints: "models/outputs/checkpoints"
+  logs_dir: "logs"
+  tensorboard_logs: "models/outputs/logs"
+  
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+# System Information
+system:
+  name: "NQ_AI Pure Visual ViT-Base Model"
+  version: "1.0"
+  description: "ViT-Base-Patch16-224 (87M params) with pure visual input for daily NQ pattern analysis"
+  architecture: "Google ViT-Base + Simple Classification Head"
+  parameters: "87M (ViT-Base) + classifier layers"
+  input: "Chart images only (224x224x3)"
+  data_period: "25 years (2000-2025)"
+  expected_samples: 6237
+  target_accuracy: "≥70%"
