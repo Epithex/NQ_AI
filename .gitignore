@@ -34,7 +34,6 @@ venv.bak/
 
 # Data files (except data/ which is tracked by LFS)
 *.csv
-*.xlsx
 *.xls
 *.h5
 *.hdf5
