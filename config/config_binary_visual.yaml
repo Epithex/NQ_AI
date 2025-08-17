@@ -1,0 +1,165 @@
+# NQ_AI Binary Visual ViT-Base Model Configuration
+# 87M parameter Google ViT-Base-Patch16-224 for binary bullish/bearish classification
+
+# Multi-Instrument Data Configuration (Excel-based)
+data:
+  # Excel data source configuration
+  source: "excel"
+  excel_file: "data/Futures_Data_Consolidated.xlsx"
+  
+  # Available instruments for selection
+  available_instruments: ["DOW", "NASDAQ", "SP500", "ALL"]
+  
+  # Default instruments (can be overridden via command line)
+  instruments: ["DOW", "NASDAQ", "SP500"]
+  
+  # Instrument to Excel sheet mapping
+  instrument_config:
+    DOW:
+      sheet: "DowJones"
+      display_name: "Dow Jones E-mini"
+    NASDAQ:
+      sheet: "Nasdaq" 
+      display_name: "NASDAQ-100 E-mini"
+    SP500:
+      sheet: "SP500"
+      display_name: "S&P 500 E-mini"
+  
+  # Data parameters
+  timeframe: "daily"
+  bars_per_chart: 30  # 30 daily bars per chart (6 weeks context)
+  start_year: 2000
+  end_year: 2025
+  
+# Binary Visual Chart Generation
+chart:
+  width: 12
+  height: 8
+  dpi: 100
+  image_size: 224        # ViT-Base input size
+  style: "yahoo"
+  volume: false
+  title: false           # Clean visual appearance
+  grid: false            # No grid for cleaner charts
+  axes_labels: false     # No text overlays
+  remove_prev_day_lines: true  # No previous day level lines for binary classification
+  
+# Binary Classification (3-class system: Bearish/Bullish/Neutral)
+classification:
+  num_classes: 3
+  labels:
+    0: "Bearish"           # Close < Open (red candle)
+    1: "Bullish"           # Close > Open (green candle)
+    2: "Neutral"           # Close = Open (doji candle, very rare)
+  classification_type: "binary"
+  method: "open_vs_close"
+    
+# Binary Visual Configuration (No Numerical Features)
+features:
+  numerical_features: 0   # Pure visual approach
+  feature_names: []       # No numerical features
+  candle_features: true   # Extract candle metrics for analysis only
+    
+# ViT-Base Model Configuration (Binary Classification)
+model:
+  # ViT-Base Architecture (Google)
+  name: "vit_base_patch16_224_binary"
+  image_size: 224
+  patch_size: 16
+  hidden_size: 768          # ViT-Base hidden dimension
+  num_layers: 12            # ViT-Base transformer layers
+  num_heads: 12             # ViT-Base attention heads
+  mlp_dim: 3072             # ViT-Base MLP dimension
+  dropout_rate: 0.15        # Increased for larger dataset
+  
+  # Binary Classification Training Parameters
+  batch_size: 32            # Increased for binary classification
+  learning_rate: 0.0001     # Standard ViT-Base learning rate
+  epochs: 40                # Adjusted for binary classification
+  weight_decay: 0.01
+  
+  # Binary Visual Mode
+  visual_only: true         # Pure visual learning
+  use_feature_fusion: false # No numerical feature fusion
+  classification_head_size: 512  # Size of final classification layer
+    
+# Training Configuration (Binary Classification)
+training:
+  # Data splits (across all instruments)
+  train_split: 0.8          # 80% training (~16K samples)
+  val_split: 0.1            # 10% validation (~2K samples)  
+  test_split: 0.1           # 10% test (~2K samples)
+  
+  # Binary classification specific
+  use_class_weights: true   # Handle potential class imbalance
+  expected_class_distribution:
+    bearish: 0.48           # Expected ~48% bearish candles
+    bullish: 0.48           # Expected ~48% bullish candles
+    neutral: 0.04           # Expected ~4% neutral (doji) candles
+  
+  data_augmentation: false  # No augmentation for financial charts
+  
+  # Training optimizations
+  mixed_precision: false    # Disabled for stability
+  gradient_clipping: true   # Stabilize training
+  gradient_clip_norm: 1.0
+  
+  # Learning rate scheduling
+  lr_scheduling: true
+  lr_schedule: "cosine_decay"
+  warmup_epochs: 3          # Reduced for binary classification
+  
+  # Early stopping and checkpointing
+  early_stopping: true
+  early_stopping_patience: 8  # Reduced for binary task
+  checkpoint_frequency: 5   # Save every 5 epochs
+  
+  # Binary classification metrics
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1_score"
+    - "auc"
+  primary_metric: "f1_score"  # Best for binary classification
+  
+# Multi-Instrument Dataset Configuration
+dataset:
+  combine_instruments: true     # Train on combined dataset
+  stratify_by_instrument: false # Mix instruments in splits
+  expected_total_samples: 20000 # Approximate total across all instruments
+  min_samples_per_instrument: 6000  # Minimum samples per instrument
+  
+  # Binary classification specific
+  balance_classes: true         # Ensure balanced bullish/bearish samples
+  min_class_samples: 100        # Minimum samples per class
+  
+# File Paths
+paths:
+  data_root: "data"
+  images: "data/images_binary"      # Separate folder for binary charts
+  labels: "data/labels_binary"      # Binary classification labels
+  metadata: "data/metadata_binary"  # Binary metadata
+  models: "models"
+  outputs: "models/outputs_binary"  # Binary model outputs
+  checkpoints: "models/outputs_binary/checkpoints"
+  logs_dir: "logs"
+  tensorboard_logs: "models/outputs_binary/logs"
+  
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+# System Information
+system:
+  name: "NQ_AI Binary Visual ViT-Base Model"
+  version: "3.0"
+  description: "Binary ViT-Base-Patch16-224 (87M params) for bullish/bearish daily pattern classification"
+  architecture: "Google ViT-Base (Binary Visual)"
+  parameters: "87M (ViT-Base visual only)"
+  instruments: "DOW, NASDAQ, SP500 futures"
+  data_period: "25 years (2000-2025)"
+  expected_samples: 20000
+  approach: "Binary visual learning - open vs close classification"
+  classification_method: "Open vs Close price comparison"
