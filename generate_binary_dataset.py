@@ -53,6 +53,17 @@ def main():
         action="store_true",
         help="Perform dry run without generating actual data",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Number of parallel workers for dataset generation (max 32, default: single-threaded)",
+    )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Enable parallel processing with auto-detected worker count",
+    )
 
     args = parser.parse_args()
 
@@ -109,9 +120,25 @@ def main():
             print("🚀 Ready for full dataset generation")
             return 0
 
+        # Determine worker count for parallel processing
+        workers = None
+        if args.parallel or args.workers:
+            import multiprocessing as mp
+            if args.workers:
+                workers = min(args.workers, 32)  # Cap at 32 as requested
+            else:
+                workers = min(mp.cpu_count(), 32)  # Auto-detect, capped at 32
+            
+            if workers > 1:
+                print(f"⚡ Parallel processing enabled: {workers} workers (max 32)")
+            else:
+                print(f"🔄 Single-threaded processing (workers={workers})")
+        else:
+            print(f"🔄 Single-threaded processing (default)")
+
         # Initialize dataset creator
         print(f"\n🏗️  Initializing Binary Dataset Creator...")
-        creator = BinaryDatasetCreator(args.config)
+        creator = BinaryDatasetCreator(args.config, workers=workers)
 
         # Generate dataset
         if len(instruments) == 1 and "ALL" not in instruments:
@@ -181,6 +208,9 @@ def main():
 
     except KeyboardInterrupt:
         print(f"\n⏹️  Dataset generation interrupted by user")
+        if 'creator' in locals():
+            print("🧹 Cleaning up worker processes...")
+            # Any necessary cleanup will be handled by ProcessPoolExecutor context manager
         return 1
 
     except Exception as e:
@@ -188,6 +218,8 @@ def main():
         import traceback
 
         traceback.print_exc()
+        if 'creator' in locals():
+            print("🧹 Cleaning up after error...")
         return 1
 
 

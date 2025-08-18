@@ -133,6 +133,22 @@ dataset:
   # Binary classification specific
   balance_classes: true         # Ensure balanced bullish/bearish samples
   min_class_samples: 100        # Minimum samples per class
+
+# Parallel Processing Configuration
+parallel:
+  # Worker settings
+  max_workers: 32               # Maximum parallel workers (user configurable)
+  default_workers: 8            # Default worker count if not specified
+  chunk_size: 100               # Samples per processing chunk
+  progress_reporting_interval: 100  # Report progress every N samples
+  
+  # Resource management
+  timeout_seconds: 300          # Timeout per sample processing (5 minutes)
+  memory_limit_mb: 8192         # Memory limit per worker (8GB)
+  
+  # Error handling
+  max_retries: 2                # Retry failed samples
+  continue_on_errors: true      # Continue processing if some samples fail
   
 # File Paths
 paths:

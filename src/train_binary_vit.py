@@ -261,7 +261,8 @@ class BinaryViTTrainer:
             self.training_results['total_epochs'] = len(self.history.history['loss'])
             
             # Find best epoch
-            val_f1_scores = self.history.history.get('val_f1_score', [])\n            if val_f1_scores:
+            val_f1_scores = self.history.history.get('val_f1_score', [])
+            if val_f1_scores:
                 best_epoch = np.argmax(val_f1_scores)
                 self.training_results['best_epoch'] = best_epoch + 1
                 self.training_results['best_val_f1'] = float(val_f1_scores[best_epoch])

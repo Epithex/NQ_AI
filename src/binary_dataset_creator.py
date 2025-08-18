@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import concurrent.futures
 from threading import Lock
+import multiprocessing as mp
+from multiprocessing import Value, Array
+import time
 
 # Import our binary analysis components
 from binary_pattern_analyzer import BinaryPatternAnalyzer
@@ -23,12 +26,73 @@ from binary_chart_generator import BinaryChartGenerator
 from excel_data_fetcher import ExcelDataFetcher
 
 
+def process_sample_parallel(args: Tuple) -> Dict:
+    """
+    Process a single sample in parallel worker process.
+    
+    Args:
+        args: Tuple containing (date, instrument, data_slice, config_path)
+        
+    Returns:
+        Dictionary with sample information or error details
+    """
+    try:
+        date, instrument, data_slice, config_path = args
+        
+        # Initialize components in worker process (can't share across processes)
+        pattern_analyzer = BinaryPatternAnalyzer(config_path)
+        chart_generator = BinaryChartGenerator(config_path)
+        
+        # Get daily candle for analysis
+        daily_candle = data_slice.iloc[-1]  # Last row is the analysis date
+        
+        # Analyze binary pattern
+        pattern = pattern_analyzer.analyze_binary_pattern(daily_candle)
+        
+        # Generate chart image
+        chart_path = chart_generator.generate_binary_chart_image(
+            date, data_slice, instrument
+        )
+        
+        # Extract candle features for metadata
+        features = pattern_analyzer.extract_candle_features(daily_candle)
+        
+        # Create sample record
+        sample = {
+            "sample_id": f"{instrument}_{date.strftime('%Y%m%d')}",
+            "date": date.isoformat(),
+            "instrument": instrument,
+            "pattern": pattern,
+            "pattern_label": ["Bearish", "Bullish", "Neutral"][pattern],
+            "chart_path": chart_path,
+            "features": features,
+            "ohlc": {
+                "open": float(daily_candle["Open"]),
+                "high": float(daily_candle["High"]),
+                "low": float(daily_candle["Low"]),
+                "close": float(daily_candle["Close"]),
+            },
+            "success": True
+        }
+        
+        return sample
+        
+    except Exception as e:
+        return {
+            "date": date.isoformat() if 'date' in locals() else "unknown",
+            "instrument": instrument if 'instrument' in locals() else "unknown",
+            "error": str(e),
+            "success": False
+        }
+
+
 class BinaryDatasetCreator:
     """Creates comprehensive binary classification datasets for multi-instrument training."""
 
-    def __init__(self, config_path: str = "config/config_binary_visual.yaml"):
+    def __init__(self, config_path: str = "config/config_binary_visual.yaml", workers: int = None):
         """Initialize binary dataset creator."""
         self.config = self.load_config(config_path)
+        self.workers = workers
         self.setup_logging()
 
         # Initialize components
@@ -39,6 +103,12 @@ class BinaryDatasetCreator:
         # Dataset tracking
         self.samples_created = 0
         self.samples_lock = Lock()
+        
+        # Parallel processing setup
+        if self.workers and self.workers > 1:
+            self.logger.info(f"Parallel processing enabled: {self.workers} workers")
+        else:
+            self.logger.info("Single-threaded processing enabled")
         self.dataset_manifest = {
             "creation_date": datetime.now().isoformat(),
             "config": self.config,
@@ -166,8 +236,25 @@ class BinaryDatasetCreator:
         Returns:
             List of sample dictionaries
         """
+        # Choose parallel or sequential processing based on worker count
+        if self.workers and self.workers > 1:
+            return self.create_binary_samples_parallel(instrument, data)
+        else:
+            return self.create_binary_samples_sequential(instrument, data)
+
+    def create_binary_samples_sequential(self, instrument: str, data: pd.DataFrame) -> List[Dict]:
+        """
+        Create binary classification samples sequentially (original method).
+
+        Args:
+            instrument: Instrument identifier
+            data: Historical OHLC data
+
+        Returns:
+            List of sample dictionaries
+        """
         try:
-            self.logger.info(f"Creating binary samples for {instrument}")
+            self.logger.info(f"Creating binary samples for {instrument} (sequential)")
 
             samples = []
             errors = []
@@ -242,6 +329,106 @@ class BinaryDatasetCreator:
             self.logger.error(f"Error creating binary samples for {instrument}: {e}")
             raise
 
+    def create_binary_samples_parallel(self, instrument: str, data: pd.DataFrame) -> List[Dict]:
+        """
+        Create binary classification samples using parallel processing.
+
+        Args:
+            instrument: Instrument identifier
+            data: Historical OHLC data
+
+        Returns:
+            List of sample dictionaries
+        """
+        try:
+            self.logger.info(f"Creating binary samples for {instrument} (parallel: {self.workers} workers)")
+
+            bars_per_chart = self.config["data"]["bars_per_chart"]
+            start_idx = bars_per_chart - 1
+            
+            # Prepare arguments for parallel processing
+            process_args = []
+            for i in range(start_idx, len(data)):
+                analysis_date = data.index[i]
+                # Get chart window data for this analysis date
+                chart_data = data.iloc[i - bars_per_chart + 1:i + 1].copy()
+                
+                process_args.append((
+                    analysis_date,
+                    instrument,
+                    chart_data,
+                    "config/config_binary_visual.yaml"  # Config path for worker
+                ))
+
+            total_samples = len(process_args)
+            self.logger.info(f"Processing {total_samples} samples for {instrument}")
+
+            # Remove shared counter - not needed for simple processing
+            # ProcessPoolExecutor handles progress differently than multiprocessing.Pool
+
+            samples = []
+            errors = []
+            start_time = time.time()
+
+            # Process samples in parallel
+            try:
+                with concurrent.futures.ProcessPoolExecutor(max_workers=self.workers) as executor:
+                    # Submit all tasks
+                    future_to_args = {executor.submit(process_sample_parallel, args): args 
+                                     for args in process_args}
+
+                    # Collect results with progress reporting
+                    completed = 0
+                    for future in concurrent.futures.as_completed(future_to_args):
+                        try:
+                            result = future.result()
+                            
+                            if result.get("success", False):
+                                samples.append(result)
+                            else:
+                                errors.append(result)
+                                
+                            completed += 1
+                            
+                            # Progress reporting every 100 samples
+                            if completed % 100 == 0:
+                                elapsed = time.time() - start_time
+                                rate = completed / elapsed if elapsed > 0 else 0
+                                progress = (completed / total_samples) * 100
+                                self.logger.info(
+                                    f"{instrument}: {completed}/{total_samples} completed "
+                                    f"({progress:.1f}%, {rate:.1f} samples/sec)"
+                                )
+                                
+                        except Exception as e:
+                            errors.append({
+                                "error": f"Future processing error: {e}",
+                                "success": False
+                            })
+                            
+            except KeyboardInterrupt:
+                self.logger.warning(f"Parallel processing interrupted for {instrument}")
+                # Allow graceful shutdown
+                raise
+
+            elapsed = time.time() - start_time
+            total_rate = len(samples) / elapsed if elapsed > 0 else 0
+            
+            self.logger.info(
+                f"Parallel sample creation complete for {instrument}: "
+                f"{len(samples)} samples, {len(errors)} errors "
+                f"({total_rate:.1f} samples/sec)"
+            )
+
+            if errors:
+                self.logger.warning(f"Errors for {instrument}: {len(errors)} total, first few: {errors[:3]}")
+
+            return samples
+
+        except Exception as e:
+            self.logger.error(f"Error creating parallel binary samples for {instrument}: {e}")
+            raise
+
     def create_instrument_dataset(self, instrument: str, start_year: int = None, end_year: int = None) -> Dict:
         """
         Create complete binary dataset for a single instrument.
@@ -271,7 +458,17 @@ class BinaryDatasetCreator:
 
             # Calculate statistics
             patterns = [s["pattern"] for s in samples]
-            stats = self.pattern_analyzer.get_pattern_statistics(patterns)
+            if patterns:
+                stats = self.pattern_analyzer.get_pattern_statistics(patterns)
+            else:
+                # Handle case where no samples were created successfully
+                stats = {
+                    "pattern_counts": {0: 0, 1: 0, 2: 0},
+                    "pattern_percentages": [0.0, 0.0, 0.0],
+                    "bearish_percentage": 0.0,
+                    "bullish_percentage": 0.0,
+                    "neutral_percentage": 0.0
+                }
 
             # Create instrument dataset info
             instrument_info = {
@@ -288,6 +485,23 @@ class BinaryDatasetCreator:
 
             # Save instrument-specific data
             self.save_instrument_data(instrument, instrument_info)
+
+            # For single instrument datasets, also create metadata manifest
+            self.dataset_manifest["instruments"][instrument] = {
+                "total_samples": instrument_info["total_samples"],
+                "pattern_distribution": instrument_info["pattern_distribution"],
+                "date_range": instrument_info["date_range"],
+            }
+            self.dataset_manifest["total_samples"] = len(samples)
+            self.dataset_manifest["statistics"] = stats
+            self.dataset_manifest["samples"] = samples
+
+            # Create data splits for single instrument
+            splits = self.create_data_splits(samples)
+            self.dataset_manifest["data_splits"] = splits
+
+            # Save complete dataset metadata
+            self.save_complete_dataset()
 
             self.logger.info(
                 f"Binary dataset created for {instrument}: {len(samples)} samples"
