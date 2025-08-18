@@ -1,38 +1,173 @@
 #!/usr/bin/env python3
 """
-Daily Dataset Creator for NQ Pattern Analysis
-Orchestrates the complete data generation pipeline for daily NQ analysis
+Daily Dataset Creator for Multi-Instrument 4-Class Previous Day Levels Classification
+Creates hybrid training datasets (visual + numerical) from DOW, NASDAQ, SP500 futures
+Uses Excel data source with 4-class pattern analysis and previous day level reference lines
 """
 
 import pandas as pd
+import numpy as np
 import json
 import os
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 import yaml
 import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional
+import concurrent.futures
+from threading import Lock
+import multiprocessing as mp
+from multiprocessing import Value, Array
+import time
 
-# Import our components
-from stooq_fetcher import DailyNQFetcher
-from daily_chart_generator import DailyChartGenerator
+# Import our daily analysis components
 from daily_pattern_analyzer import DailyPatternAnalyzer
+from daily_chart_generator import DailyChartGenerator
+from excel_data_fetcher import ExcelDataFetcher
+
+
+def process_sample_parallel(args: Tuple) -> Dict:
+    """
+    Process a single sample in parallel worker process for 4-class hybrid dataset.
+    
+    Args:
+        args: Tuple containing (date, instrument, current_data, previous_data, config_path)
+        
+    Returns:
+        Dictionary with sample information including visual and numerical features
+    """
+    try:
+        date, instrument, current_data, previous_data, config_path = args
+        
+        # Initialize components in worker process (can't share across processes)
+        pattern_analyzer = DailyPatternAnalyzer(config_path)
+        chart_generator = DailyChartGenerator(config_path)
+        
+        # Get current and previous day candles
+        current_candle = current_data.iloc[-1]  # Last row is the analysis date
+        previous_candle = previous_data.iloc[-1]  # Previous day data
+        
+        # Analyze 4-class daily pattern
+        pattern = pattern_analyzer.analyze_daily_pattern(current_candle, previous_candle)
+        
+        # Generate chart image with previous day level reference lines
+        chart_path = chart_generator.generate_daily_chart_image(
+            date, current_data, previous_candle, instrument
+        )
+        
+        # Extract comprehensive features for metadata
+        features = pattern_analyzer.extract_candle_features(current_candle, previous_candle)
+        
+        # Extract numerical features for the hybrid model
+        numerical_features = pattern_analyzer.extract_numerical_features(current_candle, previous_candle)
+        
+        # Create hybrid sample record (visual + numerical)
+        sample = {
+            "sample_id": f"{instrument}_{date.strftime('%Y%m%d')}",
+            "date": date.isoformat(),
+            "instrument": instrument,
+            "pattern": pattern,
+            "pattern_label": {1: "High Breakout", 2: "Low Breakdown", 3: "Range Expansion", 4: "Range Bound"}[pattern],
+            "chart_path": chart_path,
+            "features": features,
+            "numerical_features": numerical_features,  # The 3 key features for hybrid model
+            "current_ohlc": {
+                "open": float(current_candle["Open"]),
+                "high": float(current_candle["High"]),
+                "low": float(current_candle["Low"]),
+                "close": float(current_candle["Close"]),
+            },
+            "previous_levels": {
+                "high": float(previous_candle["High"]),
+                "low": float(previous_candle["Low"]),
+            },
+            "success": True
+        }
+        
+        return sample
+        
+    except Exception as e:
+        return {
+            "date": date.isoformat() if 'date' in locals() else "unknown",
+            "instrument": instrument if 'instrument' in locals() else "unknown",
+            "error": str(e),
+            "success": False
+        }
 
 
 class DailyDatasetCreator:
-    """Creates daily NQ pattern analysis dataset."""
+    """Creates comprehensive 4-class hybrid datasets for multi-instrument training."""
 
-    def __init__(self, config_path: str = "config/config.yaml"):
-        """Initialize dataset creator with all components."""
+    def __init__(self, config_path: str = "config/config_daily_hybrid.yaml", workers: int = None):
+        """Initialize daily dataset creator."""
         self.config = self.load_config(config_path)
+        self.config_path = config_path
+        self.workers = workers
+        self.setup_logging()
 
         # Initialize components
-        self.data_fetcher = DailyNQFetcher(config_path)
-        self.chart_generator = DailyChartGenerator(config_path)
         self.pattern_analyzer = DailyPatternAnalyzer(config_path)
+        self.chart_generator = DailyChartGenerator(config_path)
+        self.data_fetcher = ExcelDataFetcher(config_path)
 
-        self.setup_logging()
-        self.ensure_directories()
+        # Dataset tracking
+        self.samples_created = 0
+        self.samples_lock = Lock()
+        
+        # Parallel processing setup
+        if self.workers and self.workers > 1:
+            self.logger.info(f"Parallel processing enabled: {self.workers} workers")
+        else:
+            self.logger.info("Single-threaded processing enabled")
+        self.dataset_manifest = {
+            "creation_date": datetime.now().isoformat(),
+            "config": self.config,
+            "instruments": {},
+            "samples": [],
+            "statistics": {},
+            "model_type": "hybrid_4class",
+            "features": {
+                "visual": "30-bar daily charts with previous day level reference lines",
+                "numerical": ["distance_to_prev_high", "distance_to_prev_low", "prev_day_range"]
+            }
+        }
+
+        # Ensure directories exist
+        self.setup_directories()
+
+    def resolve_instruments(self, selected_instruments: List[str] = None) -> List[str]:
+        """
+        Resolve instrument selection including handling 'ALL' option.
+
+        Args:
+            selected_instruments: List of selected instruments or None for default
+
+        Returns:
+            List of actual instrument names to process
+        """
+        if selected_instruments is None:
+            # Use default from config
+            selected_instruments = self.config["data"]["instruments"]
+
+        # Handle 'ALL' selection
+        if "ALL" in selected_instruments:
+            available = self.config["data"]["available_instruments"]
+            # Return all instruments except 'ALL'
+            return [inst for inst in available if inst != "ALL"]
+        
+        # Validate instrument selection
+        available = self.config["data"]["available_instruments"]
+        valid_instruments = []
+        for instrument in selected_instruments:
+            if instrument in available and instrument != "ALL":
+                valid_instruments.append(instrument)
+            else:
+                self.logger.warning(f"Invalid instrument: {instrument}. Available: {available}")
+        
+        if not valid_instruments:
+            raise ValueError(f"No valid instruments selected from: {selected_instruments}")
+
+        return valid_instruments
 
     def load_config(self, config_path: str) -> dict:
         """Load configuration from YAML file."""
@@ -40,7 +175,7 @@ class DailyDatasetCreator:
             return yaml.safe_load(f)
 
     def setup_logging(self):
-        """Setup logging for the dataset creator."""
+        """Setup logging for dataset creation."""
         log_dir = self.config["paths"]["logs_dir"]
         os.makedirs(log_dir, exist_ok=True)
 
@@ -48,268 +183,518 @@ class DailyDatasetCreator:
             level=getattr(logging, self.config["logging"]["level"]),
             format=self.config["logging"]["format"],
             handlers=[
-                logging.FileHandler(f"{log_dir}/dataset_creator.log"),
+                logging.FileHandler(f"{log_dir}/daily_dataset_creator.log"),
                 logging.StreamHandler(),
             ],
         )
         self.logger = logging.getLogger(__name__)
 
-    def ensure_directories(self):
-        """Ensure all required directories exist."""
-        for path_key, path_value in self.config["paths"].items():
-            if path_key != "logs_dir":  # Already created in setup_logging
-                os.makedirs(path_value, exist_ok=True)
+    def setup_directories(self):
+        """Create necessary directories for daily hybrid dataset."""
+        directories = [
+            self.config["paths"]["images"],
+            self.config["paths"]["labels"],
+            self.config["paths"]["metadata"],
+            self.config["paths"]["logs_dir"],
+        ]
 
-    def generate_dataset(
-        self,
-        start_year: int = None,
-        end_year: int = None,
-        dataset_name: str = "daily_nq_patterns",
-    ):
-        """Generate complete daily pattern dataset."""
-        if start_year is None:
-            start_year = self.config["data"]["start_year"]
-        if end_year is None:
-            end_year = self.config["data"]["end_year"]
+        for directory in directories:
+            os.makedirs(directory, exist_ok=True)
+            self.logger.debug(f"Ensured directory exists: {directory}")
 
-        self.logger.info("=" * 60)
-        self.logger.info(f"Starting daily dataset generation: {dataset_name}")
-        self.logger.info(f"Period: {start_year}-{end_year}")
-        self.logger.info("=" * 60)
+    def fetch_instrument_data(
+        self, instrument: str, start_year: int, end_year: int
+    ) -> pd.DataFrame:
+        """
+        Fetch historical data for a single instrument from Excel.
 
+        Args:
+            instrument: Instrument name (DOW, NASDAQ, SP500)
+            start_year: Start year for data
+            end_year: End year for data
+
+        Returns:
+            DataFrame with OHLC data
+        """
         try:
-            # Step 1: Fetch all daily data
-            self.logger.info("Step 1: Fetching daily NQ data...")
-            daily_data = self.data_fetcher.fetch_daily_data(start_year, end_year)
-            self.logger.info(f"✅ Fetched {len(daily_data)} daily bars")
+            self.logger.info(
+                f"Fetching Excel data for {instrument} ({start_year}-{end_year})"
+            )
 
-            # Step 2: Process each trading day
-            self.logger.info("Step 2: Processing trading days...")
-            samples = self.process_all_trading_days(daily_data)
-            self.logger.info(f"✅ Generated {len(samples)} samples")
+            # Fetch data using ExcelDataFetcher
+            data = self.data_fetcher.fetch_instrument_data(
+                instrument=instrument,
+                start_year=start_year, 
+                end_year=end_year
+            )
 
-            # Step 3: Generate dataset summary
-            self.logger.info("Step 3: Creating dataset summary...")
-            summary = self.create_dataset_summary(samples, daily_data, dataset_name)
-            self.logger.info("✅ Dataset summary created")
+            if data is None or len(data) == 0:
+                raise ValueError(f"No data retrieved for {instrument}")
 
-            # Step 4: Save complete dataset metadata
-            self.logger.info("Step 4: Saving dataset metadata...")
-            self.save_dataset_metadata(samples, summary, dataset_name)
-            self.logger.info("✅ Metadata saved")
+            self.logger.info(f"Retrieved {len(data)} bars for {instrument}")
+            self.logger.info(f"Date range: {data.index[0]} to {data.index[-1]}")
 
-            self.logger.info("=" * 60)
-            self.logger.info("DATASET GENERATION COMPLETED SUCCESSFULLY!")
-            self.logger.info(f"Total samples: {len(samples)}")
-            if samples:
-                self.logger.info(
-                    f"Date range: {samples[0]['date']} to {samples[-1]['date']}"
-                )
-            self.logger.info("=" * 60)
-
-            return samples, summary
+            return data
 
         except Exception as e:
-            self.logger.error(f"Fatal error in dataset generation: {str(e)}")
+            self.logger.error(f"Error fetching data for {instrument}: {e}")
             raise
 
-    def process_all_trading_days(self, daily_data: pd.DataFrame) -> List[Dict]:
-        """Process all trading days to generate samples."""
+    def create_daily_samples(self, instrument: str, data: pd.DataFrame) -> List[Dict]:
+        """
+        Create 4-class hybrid classification samples for an instrument.
+
+        Args:
+            instrument: Instrument identifier
+            data: Historical OHLC data
+
+        Returns:
+            List of hybrid sample dictionaries
+        """
+        # Choose parallel or sequential processing based on worker count
+        if self.workers and self.workers > 1:
+            return self.create_daily_samples_parallel(instrument, data)
+        else:
+            return self.create_daily_samples_sequential(instrument, data)
+
+    def create_daily_samples_sequential(self, instrument: str, data: pd.DataFrame) -> List[Dict]:
+        """
+        Create 4-class hybrid samples sequentially.
+
+        Args:
+            instrument: Instrument identifier
+            data: Historical OHLC data
+
+        Returns:
+            List of sample dictionaries
+        """
         samples = []
         errors = []
 
-        # Start processing after we have enough bars for charts
-        min_bars = self.config["data"]["bars_per_chart"]
-        start_idx = min_bars
+        # Need at least 2 days (current + previous) and enough for chart window
+        chart_window = self.config["data"]["bars_per_chart"]
+        min_data_needed = chart_window + 1  # +1 for previous day
 
-        total_days = len(daily_data) - start_idx
-        self.logger.info(
-            f"Processing {total_days} trading days (starting from index {start_idx})"
-        )
+        if len(data) < min_data_needed:
+            self.logger.warning(
+                f"Insufficient data for {instrument}: {len(data)} bars (need {min_data_needed})"
+            )
+            return []
 
-        for i in range(start_idx, len(daily_data)):
-            analysis_date = daily_data.index[i]
-
+        # Start from second day (need previous day for levels)
+        for i in range(1, len(data)):
             try:
-                sample = self.process_single_trading_day(analysis_date, daily_data, i)
-                if sample:
-                    samples.append(sample)
+                current_date = data.index[i]
+                
+                # Get chart window for current analysis
+                start_idx = max(0, i - chart_window + 1)
+                chart_data = data.iloc[start_idx:i+1]
+                
+                # Get previous day data
+                previous_candle = data.iloc[i-1]
+                current_candle = data.iloc[i]
 
-                    # Progress logging
-                    processed = len(samples)
-                    if processed % 50 == 0:
-                        progress_pct = (processed / total_days) * 100
-                        self.logger.info(
-                            f"Progress: {processed}/{total_days} samples ({progress_pct:.1f}%)"
-                        )
+                # Analyze daily pattern
+                pattern = self.pattern_analyzer.analyze_daily_pattern(current_candle, previous_candle)
+
+                # Generate chart with previous day levels
+                chart_path = self.chart_generator.generate_daily_chart_image(
+                    current_date, chart_data, previous_candle, instrument
+                )
+
+                # Extract features
+                features = self.pattern_analyzer.extract_candle_features(current_candle, previous_candle)
+                numerical_features = self.pattern_analyzer.extract_numerical_features(current_candle, previous_candle)
+
+                # Create hybrid sample
+                sample = {
+                    "sample_id": f"{instrument}_{current_date.strftime('%Y%m%d')}",
+                    "date": current_date.isoformat(),
+                    "instrument": instrument,
+                    "pattern": pattern,
+                    "pattern_label": {1: "High Breakout", 2: "Low Breakdown", 3: "Range Expansion", 4: "Range Bound"}[pattern],
+                    "chart_path": chart_path,
+                    "features": features,
+                    "numerical_features": numerical_features,
+                    "current_ohlc": {
+                        "open": float(current_candle["Open"]),
+                        "high": float(current_candle["High"]),
+                        "low": float(current_candle["Low"]),
+                        "close": float(current_candle["Close"]),
+                    },
+                    "previous_levels": {
+                        "high": float(previous_candle["High"]),
+                        "low": float(previous_candle["Low"]),
+                    },
+                }
+
+                samples.append(sample)
+
+                if len(samples) % 100 == 0:
+                    self.logger.info(f"Created {len(samples)} samples for {instrument}")
 
             except Exception as e:
-                error_msg = f"Error processing {analysis_date.date()}: {str(e)}"
+                error_msg = f"Error creating sample for {instrument} on {current_date}: {e}"
                 self.logger.error(error_msg)
                 errors.append(error_msg)
 
         self.logger.info(
-            f"Processing complete: {len(samples)} samples, {len(errors)} errors"
+            f"Sequential processing complete for {instrument}: {len(samples)} samples, {len(errors)} errors"
         )
-
-        if errors:
-            self.logger.warning(f"Sample of errors: {errors[:3]}...")
 
         return samples
 
-    def process_single_trading_day(
-        self, analysis_date: datetime, daily_data: pd.DataFrame, data_index: int
-    ) -> Optional[Dict]:
-        """Process a single trading day to generate training sample."""
+    def create_daily_samples_parallel(self, instrument: str, data: pd.DataFrame) -> List[Dict]:
+        """
+        Create 4-class hybrid samples using parallel processing.
+
+        Args:
+            instrument: Instrument identifier
+            data: Historical OHLC data
+
+        Returns:
+            List of sample dictionaries
+        """
+        samples = []
+        
+        # Prepare arguments for parallel processing
+        chart_window = self.config["data"]["bars_per_chart"]
+        min_data_needed = chart_window + 1
+        
+        if len(data) < min_data_needed:
+            self.logger.warning(
+                f"Insufficient data for {instrument}: {len(data)} bars (need {min_data_needed})"
+            )
+            return []
+
+        # Create args for each sample (need current + previous day data)
+        parallel_args = []
+        for i in range(1, len(data)):  # Start from second day
+            current_date = data.index[i]
+            
+            # Get chart window data
+            start_idx = max(0, i - chart_window + 1)
+            chart_data = data.iloc[start_idx:i+1]
+            
+            # Get previous day data (single row)
+            previous_data = data.iloc[i-1:i]
+            
+            parallel_args.append((
+                current_date,
+                instrument,
+                chart_data,
+                previous_data,
+                self.config_path
+            ))
+
+        self.logger.info(f"Starting parallel processing for {instrument}: {len(parallel_args)} samples with {self.workers} workers")
+        
+        # Process samples in parallel
+        start_time = time.time()
+        with concurrent.futures.ProcessPoolExecutor(max_workers=self.workers) as executor:
+            try:
+                # Submit all tasks
+                future_to_args = {
+                    executor.submit(process_sample_parallel, args): args
+                    for args in parallel_args
+                }
+                
+                # Collect results with progress tracking
+                completed = 0
+                for future in concurrent.futures.as_completed(future_to_args):
+                    try:
+                        result = future.result(timeout=30)  # 30 second timeout per sample
+                        if result.get("success", False):
+                            samples.append(result)
+                        else:
+                            self.logger.warning(f"Sample failed: {result.get('error', 'Unknown error')}")
+                        
+                        completed += 1
+                        if completed % 100 == 0:
+                            elapsed = time.time() - start_time
+                            rate = completed / elapsed
+                            self.logger.info(f"Processed {completed}/{len(parallel_args)} samples ({rate:.1f} samples/sec)")
+                            
+                    except concurrent.futures.TimeoutError:
+                        self.logger.error(f"Sample processing timeout for {instrument}")
+                    except Exception as e:
+                        self.logger.error(f"Error processing sample: {e}")
+                        
+            except KeyboardInterrupt:
+                self.logger.warning("Parallel processing interrupted by user")
+                executor.shutdown(wait=False)
+                raise
+                
+        elapsed_time = time.time() - start_time
+        processing_rate = len(samples) / elapsed_time if elapsed_time > 0 else 0
+        
+        self.logger.info(
+            f"Parallel processing complete for {instrument}: "
+            f"{len(samples)} samples in {elapsed_time:.1f}s ({processing_rate:.1f} samples/sec)"
+        )
+
+        return samples
+
+    def create_multi_instrument_dataset(
+        self,
+        instruments: List[str] = None,
+        start_year: int = None,
+        end_year: int = None,
+    ) -> Dict:
+        """
+        Create hybrid dataset for multiple instruments with 4-class classification.
+
+        Args:
+            instruments: List of instruments to process (or None for config default)
+            start_year: Start year (or None for config default)
+            end_year: End year (or None for config default)
+
+        Returns:
+            Dictionary with dataset creation results
+        """
         try:
-            # Get the daily candle being analyzed
-            daily_candle = daily_data.iloc[data_index]
+            # Resolve parameters
+            instruments = self.resolve_instruments(instruments)
+            start_year = start_year or self.config["data"]["start_year"]
+            end_year = end_year or self.config["data"]["end_year"]
 
-            # Get previous day levels
-            prev_day = daily_data.iloc[data_index - 1]
-            prev_high = float(prev_day["High"])
-            prev_low = float(prev_day["Low"])
+            self.logger.info(f"Creating daily hybrid dataset for {instruments} ({start_year}-{end_year})")
+            self.logger.info(f"Model type: 4-class hybrid (visual + numerical features)")
 
-            # Generate chart image (30-bar window)
-            chart_path = self.chart_generator.generate_chart_image(
-                analysis_date, daily_data
-            )
+            total_samples = 0
+            all_patterns = []
+            
+            # Process each instrument
+            for instrument in instruments:
+                self.logger.info(f"Processing {instrument}...")
+                
+                # Fetch instrument data
+                data = self.fetch_instrument_data(instrument, start_year, end_year)
+                
+                # Create samples for this instrument
+                samples = self.create_daily_samples(instrument, data)
+                
+                # Update dataset manifest
+                self.dataset_manifest["instruments"][instrument] = {
+                    "samples_count": len(samples),
+                    "data_range": {
+                        "start": data.index[0].isoformat(),
+                        "end": data.index[-1].isoformat(),
+                        "total_bars": len(data)
+                    }
+                }
+                
+                # Add to global collections
+                self.dataset_manifest["samples"].extend(samples)
+                patterns = [s["pattern"] for s in samples]
+                all_patterns.extend(patterns)
+                total_samples += len(samples)
+                
+                self.logger.info(f"Completed {instrument}: {len(samples)} samples")
 
-            # Analyze pattern
-            pattern_rank = self.pattern_analyzer.analyze_daily_pattern(
-                daily_candle, prev_high, prev_low
-            )
-
-            # Extract numerical features
-            features = self.pattern_analyzer.extract_numerical_features(
-                daily_candle, prev_high, prev_low
-            )
-
-            # Create complete sample
-            sample = {
-                "date": analysis_date.strftime("%Y-%m-%d"),
-                "timestamp": analysis_date.isoformat(),
-                "chart_image": chart_path,
-                "pattern_rank": pattern_rank,
-                "pattern_label": self.config["classification"]["labels"][pattern_rank],
-                "features": features,
-                "previous_levels": {
-                    "high": prev_high,
-                    "low": prev_low,
-                    "range": prev_high - prev_low,
-                },
-                "daily_candle": {
-                    "open": float(daily_candle["Open"]),
-                    "high": float(daily_candle["High"]),
-                    "low": float(daily_candle["Low"]),
-                    "close": float(daily_candle["Close"]),
-                    "volume": (
-                        float(daily_candle["Volume"]) if "Volume" in daily_candle else 0
-                    ),
-                },
-                "metadata": {
-                    "chart_bars": self.config["data"]["bars_per_chart"],
-                    "system_version": self.config["system"]["version"],
-                    "generation_timestamp": datetime.now().isoformat(),
-                },
+            # Calculate dataset statistics
+            self.calculate_dataset_statistics(all_patterns)
+            
+            # Save dataset manifest
+            self.save_dataset_manifest()
+            
+            result = {
+                "success": True,
+                "total_samples": total_samples,
+                "instruments_processed": len(instruments),
+                "instruments": instruments,
+                "date_range": f"{start_year}-{end_year}",
+                "manifest_path": self.get_manifest_path(),
+                "model_type": "4-class hybrid",
+                "features": {
+                    "visual": "30-bar charts with previous day levels",
+                    "numerical": 3
+                }
+            }
+            
+            self.logger.info(f"Dataset creation completed successfully: {total_samples} total samples")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Dataset creation failed: {e}")
+            return {
+                "success": False,
+                "error": str(e)
             }
 
-            # Save individual sample
-            self.save_individual_sample(sample, analysis_date)
+    def calculate_dataset_statistics(self, patterns: List[int]):
+        """Calculate and store 4-class pattern distribution statistics."""
+        if not patterns:
+            return
+            
+        # Count patterns (1-4)
+        pattern_counts = {}
+        for i in range(1, 5):
+            pattern_counts[i] = patterns.count(i)
+        
+        total = len(patterns)
+        pattern_percentages = {
+            i: (count / total) * 100 for i, count in pattern_counts.items()
+        }
+        
+        self.dataset_manifest["statistics"] = {
+            "total_samples": total,
+            "pattern_counts": pattern_counts,
+            "pattern_percentages": pattern_percentages,
+            "pattern_labels": {
+                1: "High Breakout",
+                2: "Low Breakdown", 
+                3: "Range Expansion",
+                4: "Range Bound"
+            },
+            "class_balance": {
+                "most_common": max(pattern_counts, key=pattern_counts.get),
+                "least_common": min(pattern_counts, key=pattern_counts.get),
+                "balance_ratio": min(pattern_counts.values()) / max(pattern_counts.values()) if max(pattern_counts.values()) > 0 else 0
+            }
+        }
 
-            return sample
+    def get_manifest_path(self) -> str:
+        """Get path for dataset manifest file."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return os.path.join(
+            self.config["paths"]["metadata"],
+            f"daily_hybrid_dataset_manifest_{timestamp}.json"
+        )
 
-        except Exception as e:
-            self.logger.error(f"Error processing {analysis_date}: {e}")
-            return None
+    def save_dataset_manifest(self):
+        """Save the dataset manifest to JSON file."""
+        manifest_path = self.get_manifest_path()
+        
+        with open(manifest_path, 'w') as f:
+            json.dump(self.dataset_manifest, f, indent=2, default=str)
+        
+        self.logger.info(f"Dataset manifest saved: {manifest_path}")
 
-    def save_individual_sample(self, sample: Dict, analysis_date: datetime):
-        """Save individual sample to JSON file."""
+    def save_individual_sample(self, sample: Dict, instrument: str, analysis_date: datetime):
+        """Save individual hybrid sample to JSON file."""
         date_str = analysis_date.strftime("%Y%m%d")
-        filename = f"{self.config['paths']['labels']}/daily_sample_{date_str}.json"
+        filename = f"{self.config['paths']['labels']}/daily_{instrument}_{date_str}.json"
 
         with open(filename, "w") as f:
             json.dump(sample, f, indent=2, default=str)
 
-    def create_dataset_summary(
-        self, samples: List[Dict], daily_data: pd.DataFrame, dataset_name: str
-    ) -> Dict:
-        """Create comprehensive dataset summary."""
-        # Calculate pattern distribution
-        pattern_counts = {}
-        for i in range(1, 5):
-            pattern_counts[i] = sum(1 for s in samples if s["pattern_rank"] == i)
+        self.logger.debug(f"Saved individual sample: {filename}")
 
-        # Get date range
-        start_date = samples[0]["date"] if samples else None
-        end_date = samples[-1]["date"] if samples else None
-
+    def create_dataset_summary(self, instruments: List[str], total_samples: int) -> Dict:
+        """Create comprehensive 4-class hybrid dataset summary."""
         summary = {
             "dataset_info": {
-                "name": dataset_name,
-                "total_samples": len(samples),
+                "name": "4-class hybrid daily dataset",
+                "model_type": "hybrid_visual_numerical",
+                "total_samples": total_samples,
                 "generation_date": datetime.now().isoformat(),
-                "date_range": {"start": start_date, "end": end_date},
+                "instruments": instruments,
+                "classification_system": "4-class previous day levels",
             },
-            "pattern_distribution": {
-                "counts": pattern_counts,
-                "percentages": {
-                    i: (count / len(samples)) * 100 if samples else 0
-                    for i, count in pattern_counts.items()
+            "pattern_system": {
+                "classes": 4,
+                "labels": {
+                    1: "High Breakout",
+                    2: "Low Breakdown", 
+                    3: "Range Expansion",
+                    4: "Range Bound"
                 },
-                "labels": self.config["classification"]["labels"],
+                "description": "Based on current day high/low vs previous day high/low levels"
+            },
+            "features": {
+                "visual": {
+                    "type": "30-bar daily candlestick charts",
+                    "reference_lines": "Previous day high (green) and low (red) levels",
+                    "image_size": "224x224 pixels for ViT",
+                    "format": "PNG"
+                },
+                "numerical": {
+                    "count": 3,
+                    "features": [
+                        "distance_to_prev_high",
+                        "distance_to_prev_low", 
+                        "prev_day_range"
+                    ],
+                    "description": "Key metrics for hybrid model fusion"
+                }
             },
             "configuration": {
                 "chart_bars": self.config["data"]["bars_per_chart"],
-                "classification_classes": self.config["classification"]["num_classes"],
-                "system_version": self.config["system"]["version"],
+                "classification_classes": 4,
+                "hybrid_model": True,
+                "parallel_processing": self.workers is not None and self.workers > 1
             },
         }
 
         return summary
 
-    def save_dataset_metadata(
-        self, samples: List[Dict], summary: Dict, dataset_name: str
-    ):
-        """Save complete dataset metadata."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        # Save dataset summary
-        summary_file = f"{self.config['paths']['metadata']}/{dataset_name}_summary_{timestamp}.json"
-        with open(summary_file, "w") as f:
-            json.dump(summary, f, indent=2, default=str)
-
-        self.logger.info(f"Metadata saved: {summary_file}")
-
 
 def main():
-    """Generate complete 25-year daily dataset."""
-    print("🚀 NQ_AI Daily Dataset Generation")
-    print("Generating complete 25-year dataset (2000-2025)")
+    """Test the daily hybrid dataset creator."""
+    print("🚀 NQ_AI Daily Hybrid Dataset Creator")
+    print("4-Class Previous Day Levels Classification System")
 
     try:
-        # Initialize creator
+        # Initialize creator with test configuration
         creator = DailyDatasetCreator()
 
-        # Generate complete 25-year dataset using config defaults
-        print("📊 Generating complete 25-year dataset...")
-        samples, summary = creator.generate_dataset(dataset_name="daily_nq_25yr")
+        print("🏗️  Initializing daily hybrid dataset creator...")
+        print(f"   📊 Model Type: 4-class hybrid (visual + numerical)")
+        print(f"   📈 Chart Features: 30-bar charts with previous day level lines")
+        print(f"   🔢 Numerical Features: 3 key metrics for fusion")
+        print(f"   🏭 Parallel Processing: {'Enabled' if creator.workers else 'Disabled'}")
 
-        print("✅ Dataset generated successfully!")
-        print(f"   📈 Total samples: {len(samples)}")
-        if samples:
-            print(f"   📅 Date range: {samples[0]['date']} to {samples[-1]['date']}")
-        print("   🎯 Pattern distribution:")
+        # Test with a small dataset
+        print("\n🧪 Testing with single instrument (NASDAQ)...")
+        test_instruments = ["NASDAQ"]
+        
+        result = creator.create_multi_instrument_dataset(
+            instruments=test_instruments,
+            start_year=2024,  # Small test range
+            end_year=2024
+        )
 
-        for pattern, count in summary["pattern_distribution"]["counts"].items():
-            label = summary["pattern_distribution"]["labels"][pattern]
-            percentage = summary["pattern_distribution"]["percentages"][pattern]
-            print(f"      {pattern}: {label} - {count} ({percentage:.1f}%)")
+        if result["success"]:
+            print("✅ Test dataset created successfully!")
+            print(f"   📈 Total samples: {result['total_samples']}")
+            print(f"   🎯 Model type: {result['model_type']}")
+            print(f"   📊 Visual features: {result['features']['visual']}")
+            print(f"   🔢 Numerical features: {result['features']['numerical']}")
+            print(f"   📁 Manifest: {result['manifest_path']}")
+            
+            # Show pattern distribution if available
+            if creator.dataset_manifest.get("statistics"):
+                stats = creator.dataset_manifest["statistics"]
+                print("   🎯 Pattern Distribution:")
+                for pattern_id, count in stats["pattern_counts"].items():
+                    label = stats["pattern_labels"][pattern_id]
+                    percentage = stats["pattern_percentages"][pattern_id]
+                    print(f"      {pattern_id}: {label} - {count} ({percentage:.1f}%)")
+        else:
+            print(f"❌ Test failed: {result['error']}")
+            return 1
+
+        print("\n🎯 Daily Hybrid Dataset Features:")
+        print("   - 4-class previous day levels classification")
+        print("   - Hybrid model: visual charts + numerical features")
+        print("   - Previous day level reference lines (green high, red low)")
+        print("   - Multi-instrument support (DOW, NASDAQ, SP500)")
+        print("   - Parallel processing for fast generation")
+        print("   - 30-bar chart windows (approximately 6 weeks context)")
+        print("   - ViT-ready 224x224 pixel images")
+        print("   - 3 numerical features for fusion architecture")
+
+        print("\n✅ Daily hybrid dataset creator test completed successfully!")
+        print("\n🚀 Ready for full dataset generation:")
+        print("   python generate_daily_dataset.py --instruments ALL --parallel")
 
         return 0
 
     except Exception as e:
         print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
 
 

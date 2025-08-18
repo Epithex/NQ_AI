@@ -1,0 +1,216 @@
+# NQ_AI 4-Class Hybrid Daily ViT Model Configuration
+# Hybrid ViT-Base with visual + numerical features for previous day levels classification
+
+# Multi-Instrument Data Configuration (Excel-based)
+data:
+  # Excel data source configuration
+  source: "excel"
+  excel_file: "data/Futures_Data_Consolidated.xlsx"
+  
+  # Available instruments for selection
+  available_instruments: ["DOW", "NASDAQ", "SP500", "ALL"]
+  
+  # Default instruments (can be overridden via command line)
+  instruments: ["DOW", "NASDAQ", "SP500"]
+  
+  # Instrument to Excel sheet mapping
+  instrument_config:
+    DOW:
+      sheet: "DowJones"
+      display_name: "Dow Jones E-mini"
+    NASDAQ:
+      sheet: "Nasdaq" 
+      display_name: "NASDAQ-100 E-mini"
+    SP500:
+      sheet: "SP500"
+      display_name: "S&P 500 E-mini"
+  
+  # Data parameters
+  timeframe: "daily"
+  bars_per_chart: 30  # 30 daily bars per chart (6 weeks context)
+  start_year: 2000
+  end_year: 2025
+  
+# Daily Hybrid Chart Generation (with Previous Day Level Lines)
+chart:
+  width: 12
+  height: 8
+  dpi: 100
+  image_size: 224        # ViT-Base input size
+  style: "yahoo"
+  volume: false
+  title: false           # Clean visual appearance
+  grid: false            # No grid for cleaner charts
+  axes_labels: false     # No text overlays
+  show_prev_day_lines: true     # Enable previous day level reference lines
+  prev_day_line_colors:
+    high: "#2ca02c"      # Green for previous day high
+    low: "#d62728"       # Red for previous day low
+  line_style: "-"        # Solid lines for reference levels
+  line_width: 1.5        # Slightly thicker for visibility
+  
+# 4-Class Previous Day Levels Classification
+classification:
+  num_classes: 4
+  labels:
+    1: "High Breakout"     # Current high >= prev high, current low > prev low
+    2: "Low Breakdown"     # Current low <= prev low, current high < prev high
+    3: "Range Expansion"   # Current high >= prev high, current low <= prev low
+    4: "Range Bound"       # Current high < prev high, current low > prev low
+  classification_type: "previous_day_levels"
+  method: "high_low_vs_previous_levels"
+  
+  # TensorFlow mapping (0-3 internal, 1-4 interpretable)
+  tf_labels:
+    0: "High Breakout"
+    1: "Low Breakdown"
+    2: "Range Expansion"
+    3: "Range Bound"
+    
+# Hybrid Features Configuration (Visual + Numerical)
+features:
+  numerical_features: 3   # 3 key numerical features for fusion
+  feature_names:
+    - "distance_to_prev_high"    # (current_high - prev_high) / prev_high
+    - "distance_to_prev_low"     # (current_low - prev_low) / prev_low
+    - "prev_day_range"           # (prev_high - prev_low) / prev_low
+  candle_features: true   # Extract additional candle metrics for analysis
+  visual_features: true   # Chart images with reference lines
+  feature_fusion_method: "early_fusion"  # Combine after separate processing
+    
+# Hybrid ViT Model Configuration (Visual + Numerical Fusion)
+model:
+  # ViT-Base Architecture (Visual Branch)
+  name: "hybrid_daily_vit_base_patch16_224"
+  image_size: 224
+  patch_size: 16
+  hidden_size: 768          # ViT-Base hidden dimension
+  num_layers: 12            # ViT-Base transformer layers
+  num_heads: 12             # ViT-Base attention heads
+  mlp_dim: 3072             # ViT-Base MLP dimension
+  dropout_rate: 0.15        # Regularization for hybrid model
+  
+  # 4-Class Hybrid Training Parameters
+  batch_size: 24            # Reduced for hybrid model memory requirements
+  learning_rate: 0.00008    # Slightly reduced for stable hybrid training
+  epochs: 50                # Increased for 4-class complexity
+  weight_decay: 0.01
+  
+  # Hybrid Architecture Configuration
+  visual_only: false        # Hybrid: visual + numerical
+  use_feature_fusion: true  # Enable numerical feature fusion
+  classification_head_size: 512  # Size of final classification layer
+  
+  # Numerical Feature Branch Configuration
+  numerical_dense_layers: [64, 32, 16]  # Dense layers for numerical features
+  numerical_dropout: 0.15   # Dropout for numerical branch
+  numerical_activation: "relu"  # Activation for numerical layers
+  
+  # Feature Fusion Configuration
+  fusion_method: "concatenate"  # Concatenate visual + numerical features
+  fusion_dense_layers: [512, 256]  # Dense layers after fusion
+  fusion_dropout: 0.15      # Dropout after fusion
+    
+# Training Configuration (4-Class Hybrid)
+training:
+  # Data splits (across all instruments)
+  train_split: 0.8          # 80% training (~16K samples)
+  val_split: 0.1            # 10% validation (~2K samples)  
+  test_split: 0.1           # 10% test (~2K samples)
+  
+  # 4-class hybrid specific
+  use_class_weights: true   # Handle 4-class imbalance
+  expected_class_distribution:
+    high_breakout: 0.25     # Expected ~25% high breakout patterns
+    low_breakdown: 0.25     # Expected ~25% low breakdown patterns
+    range_expansion: 0.25   # Expected ~25% range expansion patterns
+    range_bound: 0.25       # Expected ~25% range bound patterns
+  
+  data_augmentation: false  # No augmentation for financial charts
+  
+  # Training optimizations for hybrid model
+  mixed_precision: false    # Disabled for stability with dual inputs
+  gradient_clipping: true   # Stabilize hybrid training
+  gradient_clip_norm: 1.0
+  
+  # Learning rate scheduling
+  lr_scheduling: true
+  lr_schedule: "cosine_decay"
+  warmup_epochs: 5          # Increased for hybrid complexity
+  
+  # Early stopping and checkpointing
+  early_stopping: true
+  early_stopping_patience: 10  # Increased for 4-class convergence
+  checkpoint_frequency: 5   # Save every 5 epochs
+  
+  # 4-class hybrid metrics
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1_score"
+    - "auc"
+    - "top_2_accuracy"  # Useful for 4-class system
+  primary_metric: "f1_score"  # Best for multi-class classification
+  
+# Multi-Instrument Dataset Configuration
+dataset:
+  combine_instruments: true     # Train on combined dataset
+  stratify_by_instrument: false # Mix instruments in splits
+  expected_total_samples: 19000 # Approximate total across all instruments (4-class)
+  min_samples_per_instrument: 6000  # Minimum samples per instrument
+  
+  # 4-class specific
+  balance_classes: true         # Ensure balanced pattern distribution
+  min_class_samples: 500        # Minimum samples per class (4 classes)
+
+# Parallel Processing Configuration
+parallel:
+  # Worker settings
+  max_workers: 32               # Maximum parallel workers (user configurable)
+  default_workers: 8            # Default worker count if not specified
+  chunk_size: 100               # Samples per processing chunk
+  progress_reporting_interval: 100  # Report progress every N samples
+  
+  # Resource management (increased for hybrid processing)
+  timeout_seconds: 300          # Timeout per sample processing (5 minutes)
+  memory_limit_mb: 10240        # Memory limit per worker (10GB for hybrid)
+  
+  # Error handling
+  max_retries: 2                # Retry failed samples
+  continue_on_errors: true      # Continue processing if some samples fail
+  
+# File Paths (Daily Hybrid)
+paths:
+  data_root: "data"
+  images: "data/images_daily"           # Daily charts with reference lines
+  labels: "data/labels_daily"           # 4-class hybrid labels
+  metadata: "data/metadata_daily"       # Daily hybrid metadata
+  models: "models"
+  outputs: "models/outputs_daily"       # Daily hybrid model outputs
+  checkpoints: "models/outputs_daily/checkpoints"
+  logs_dir: "logs"
+  tensorboard_logs: "models/outputs_daily/logs"
+  
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+# System Information
+system:
+  name: "NQ_AI 4-Class Hybrid Daily ViT Model"
+  version: "4.0"
+  description: "Hybrid ViT-Base with visual + numerical features for 4-class previous day levels classification"
+  architecture: "Hybrid ViT-Base (Visual + Numerical Fusion)"
+  parameters: "87M+ (ViT-Base visual + numerical fusion layers)"
+  instruments: "DOW, NASDAQ, SP500 futures"
+  data_period: "25 years (2000-2025)"
+  expected_samples: 19000
+  approach: "4-class hybrid learning - previous day levels with feature fusion"
+  classification_method: "High/Low vs Previous Day High/Low levels"
+  patterns:
+    - "High Breakout: current_high >= prev_high && current_low > prev_low"
+    - "Low Breakdown: current_low <= prev_low && current_high < prev_high"
+    - "Range Expansion: current_high >= prev_high && current_low <= prev_low"
+    - "Range Bound: current_high < prev_high && current_low > prev_low"

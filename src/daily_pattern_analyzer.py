@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Daily Pattern Analyzer for NQ Trading
-Analyzes daily candles against previous day levels for 4-class classification
+Analyzes daily candles for 4-class previous day levels classification
 """
 
 import pandas as pd
@@ -14,13 +14,13 @@ import os
 
 
 class DailyPatternAnalyzer:
-    """Analyzes daily candles against previous day levels."""
+    """Analyzes daily candles for 4-class previous day levels classification."""
 
-    def __init__(self, config_path: str = "config/config.yaml"):
-        """Initialize pattern analyzer with configuration."""
+    def __init__(self, config_path: str = "config/config_daily_hybrid.yaml"):
+        """Initialize daily pattern analyzer with configuration."""
         self.config = self.load_config(config_path)
         self.classification_config = self.config["classification"]
-        self.feature_config = self.config["features"]
+        self.features_config = self.config["features"]
         self.setup_logging()
 
     def load_config(self, config_path: str) -> dict:
@@ -37,103 +37,185 @@ class DailyPatternAnalyzer:
             level=getattr(logging, self.config["logging"]["level"]),
             format=self.config["logging"]["format"],
             handlers=[
-                logging.FileHandler(f"{log_dir}/pattern_analyzer.log"),
+                logging.FileHandler(f"{log_dir}/daily_pattern_analyzer.log"),
                 logging.StreamHandler(),
             ],
         )
         self.logger = logging.getLogger(__name__)
 
-    def analyze_daily_pattern(
-        self, daily_candle: pd.Series, prev_high: float, prev_low: float
-    ) -> int:
+    def analyze_daily_pattern(self, current_candle: pd.Series, previous_candle: pd.Series) -> int:
         """
-        Classify daily pattern based on previous day level interaction.
+        Classify daily pattern based on previous day level interactions.
 
-        4-class classification system:
-        1: High Breakout - Daily high >= previous day high only
-        2: Low Breakdown - Daily low <= previous day low only
-        3: Range Expansion - Both levels touched
-        4: Range Bound - Neither level touched
+        4-class previous day levels classification system:
+        1: High Breakout - Daily high >= prev_high AND daily low > prev_low
+        2: Low Breakdown - Daily low <= prev_low AND daily high < prev_high  
+        3: Range Expansion - Daily high >= prev_high AND daily low <= prev_low
+        4: Range Bound - Daily high < prev_high AND daily low > prev_low
 
         Args:
-            daily_candle: Daily OHLC data
-            prev_high: Previous day high
-            prev_low: Previous day low
+            current_candle: Current day OHLC data
+            previous_candle: Previous day OHLC data
 
         Returns:
             Pattern classification (1-4)
         """
         try:
-            # Extract daily high and low
-            daily_high = float(daily_candle["High"])
-            daily_low = float(daily_candle["Low"])
+            # Extract current day prices
+            current_high = float(current_candle["High"])
+            current_low = float(current_candle["Low"])
+            current_open = float(current_candle["Open"])
+            current_close = float(current_candle["Close"])
 
-            # Check level interactions
-            took_high = daily_high >= prev_high
-            took_low = daily_low <= prev_low
+            # Extract previous day levels
+            prev_high = float(previous_candle["High"])
+            prev_low = float(previous_candle["Low"])
 
-            # Classify based on touch pattern
-            if took_high and not took_low:
-                pattern = 1  # High breakout only
+            # Apply 4-class classification logic
+            if current_high >= prev_high and current_low > prev_low:
+                pattern = 1  # High Breakout
                 description = "High Breakout"
-            elif took_low and not took_high:
-                pattern = 2  # Low breakdown only
+            elif current_low <= prev_low and current_high < prev_high:
+                pattern = 2  # Low Breakdown
                 description = "Low Breakdown"
-            elif took_high and took_low:
-                pattern = 3  # Range expansion (both levels)
+            elif current_high >= prev_high and current_low <= prev_low:
+                pattern = 3  # Range Expansion
                 description = "Range Expansion"
-            else:
-                pattern = 4  # Range bound (neither level)
+            else:  # current_high < prev_high and current_low > prev_low
+                pattern = 4  # Range Bound
                 description = "Range Bound"
 
-            self.logger.debug(
-                f"Pattern {pattern}: {description} | High: {took_high}, Low: {took_low}"
-            )
-            self.logger.debug(
-                f"Daily H/L: {daily_high:.2f}/{daily_low:.2f} vs Prev H/L: {prev_high:.2f}/{prev_low:.2f}"
-            )
+            # Calculate additional metrics for logging
+            range_expansion = (current_high - current_low) - (prev_high - prev_low)
+            prev_high_penetration = current_high - prev_high
+            prev_low_penetration = prev_low - current_low
+
+            self.logger.debug(f"Pattern {pattern}: {description}")
+            self.logger.debug(f"Current: H={current_high:.2f}, L={current_low:.2f}")
+            self.logger.debug(f"Previous: H={prev_high:.2f}, L={prev_low:.2f}")
+            self.logger.debug(f"Range expansion: {range_expansion:.2f}")
+            self.logger.debug(f"High penetration: {prev_high_penetration:.2f}")
+            self.logger.debug(f"Low penetration: {prev_low_penetration:.2f}")
 
             return pattern
 
         except Exception as e:
-            self.logger.error(f"Error analyzing pattern: {e}")
+            self.logger.error(f"Error analyzing daily pattern: {e}")
             raise
 
-    def extract_numerical_features(
-        self, daily_candle: pd.Series, prev_high: float, prev_low: float
-    ) -> Dict[str, float]:
+    def extract_numerical_features(self, current_candle: pd.Series, previous_candle: pd.Series) -> List[float]:
         """
-        Extract distance-based numerical features.
+        Extract the 3 numerical features for hybrid model training.
+
+        Features:
+        1. Distance to previous high (prev_high - open_price)
+        2. Distance to previous low (open_price - prev_low)  
+        3. Previous day range (prev_high - prev_low)
 
         Args:
-            daily_candle: Daily OHLC data
-            prev_high: Previous day high
-            prev_low: Previous day low
+            current_candle: Current day OHLC data
+            previous_candle: Previous day OHLC data
 
         Returns:
-            Dictionary of numerical features
+            List of 3 numerical features
         """
         try:
-            open_price = float(daily_candle["Open"])
+            # Extract prices
+            current_open = float(current_candle["Open"])
+            prev_high = float(previous_candle["High"])
+            prev_low = float(previous_candle["Low"])
 
-            features = {
-                "distance_to_prev_high": prev_high
-                - open_price,  # Distance from open to prev high
-                "distance_to_prev_low": open_price
-                - prev_low,  # Distance from open to prev low
-                "prev_day_range": prev_high - prev_low,  # Size of previous day's range
-            }
+            # Calculate the 3 numerical features
+            distance_to_prev_high = prev_high - current_open
+            distance_to_prev_low = current_open - prev_low
+            prev_day_range = prev_high - prev_low
 
-            self.logger.debug(f"Features: {features}")
+            features = [distance_to_prev_high, distance_to_prev_low, prev_day_range]
+
+            self.logger.debug(f"Numerical features: {features}")
+            self.logger.debug(f"Distance to prev high: {distance_to_prev_high:.2f}")
+            self.logger.debug(f"Distance to prev low: {distance_to_prev_low:.2f}")
+            self.logger.debug(f"Previous day range: {prev_day_range:.2f}")
+
             return features
 
         except Exception as e:
-            self.logger.error(f"Error extracting features: {e}")
+            self.logger.error(f"Error extracting numerical features: {e}")
+            raise
+
+    def extract_candle_features(self, current_candle: pd.Series, previous_candle: pd.Series) -> Dict[str, float]:
+        """
+        Extract comprehensive candle-based features for analysis.
+
+        Args:
+            current_candle: Current day OHLC data
+            previous_candle: Previous day OHLC data
+
+        Returns:
+            Dictionary of candle features including numerical features
+        """
+        try:
+            # Current day prices
+            current_open = float(current_candle["Open"])
+            current_high = float(current_candle["High"])
+            current_low = float(current_candle["Low"])
+            current_close = float(current_candle["Close"])
+
+            # Previous day levels
+            prev_high = float(previous_candle["High"])
+            prev_low = float(previous_candle["Low"])
+            prev_close = float(previous_candle["Close"])
+
+            # Basic candle metrics
+            price_diff = current_close - current_open
+            current_range = current_high - current_low
+            body_size = abs(price_diff)
+
+            # Previous day level interactions
+            high_vs_prev_high = current_high - prev_high
+            low_vs_prev_low = current_low - prev_low
+            range_expansion = current_range - (prev_high - prev_low)
+
+            # Gap analysis
+            gap_from_prev_close = current_open - prev_close
+
+            # The 3 numerical features for the model
+            numerical_features = self.extract_numerical_features(current_candle, previous_candle)
+
+            features = {
+                # Basic candle features
+                "price_change": price_diff,
+                "price_change_pct": (price_diff / current_open * 100) if current_open != 0 else 0,
+                "candle_body_size": body_size,
+                "current_range": current_range,
+                "body_to_range_ratio": (body_size / current_range) if current_range != 0 else 0,
+                
+                # Previous day level interactions
+                "high_vs_prev_high": high_vs_prev_high,
+                "low_vs_prev_low": low_vs_prev_low,
+                "range_expansion": range_expansion,
+                "gap_from_prev_close": gap_from_prev_close,
+                
+                # The 3 numerical features for the model
+                "distance_to_prev_high": numerical_features[0],
+                "distance_to_prev_low": numerical_features[1],
+                "prev_day_range": numerical_features[2],
+                
+                # Penetration ratios
+                "high_penetration_ratio": (high_vs_prev_high / (prev_high - prev_low)) if (prev_high - prev_low) != 0 else 0,
+                "low_penetration_ratio": (abs(low_vs_prev_low) / (prev_high - prev_low)) if (prev_high - prev_low) != 0 else 0,
+            }
+
+            self.logger.debug(f"Comprehensive candle features: {features}")
+            return features
+
+        except Exception as e:
+            self.logger.error(f"Error extracting candle features: {e}")
             raise
 
     def get_pattern_statistics(self, patterns: List[int]) -> Dict[str, any]:
         """
-        Calculate pattern distribution statistics.
+        Calculate 4-class pattern distribution statistics.
 
         Args:
             patterns: List of pattern classifications
@@ -157,22 +239,26 @@ class DailyPatternAnalyzer:
                 i: (count / total_patterns) * 100 for i, count in pattern_counts.items()
             },
             "pattern_labels": self.classification_config["labels"],
+            "high_breakout_percentage": (pattern_counts.get(1, 0) / total_patterns) * 100,
+            "low_breakdown_percentage": (pattern_counts.get(2, 0) / total_patterns) * 100,
+            "range_expansion_percentage": (pattern_counts.get(3, 0) / total_patterns) * 100,
+            "range_bound_percentage": (pattern_counts.get(4, 0) / total_patterns) * 100,
         }
 
         return stats
 
-    def analyze_pattern_sequences(
+    def analyze_market_behavior(
         self, patterns: List[int], dates: List[datetime]
     ) -> Dict[str, any]:
         """
-        Analyze patterns over time sequences.
+        Analyze market behavior over time based on 4-class patterns.
 
         Args:
             patterns: List of pattern classifications
             dates: Corresponding dates
 
         Returns:
-            Dictionary with sequence analysis
+            Dictionary with market behavior analysis
         """
         if len(patterns) != len(dates):
             raise ValueError("Patterns and dates must have same length")
@@ -180,114 +266,166 @@ class DailyPatternAnalyzer:
         # Create pattern series
         pattern_series = pd.Series(patterns, index=dates)
 
-        # Calculate consecutive patterns
-        consecutive_analysis = {}
-        for pattern in range(1, 5):
-            consecutive_analysis[pattern] = self._find_consecutive_patterns(
-                pattern_series, pattern
-            )
+        # Calculate pattern frequencies
+        breakout_signals = (pattern_series == 1).astype(int)  # High Breakout
+        breakdown_signals = (pattern_series == 2).astype(int)  # Low Breakdown
+        expansion_signals = (pattern_series == 3).astype(int)  # Range Expansion
+        range_bound_signals = (pattern_series == 4).astype(int)  # Range Bound
 
-        # Calculate pattern transitions
-        transitions = self._calculate_pattern_transitions(patterns)
+        # Rolling averages (7-day and 30-day windows)
+        breakout_7d = breakout_signals.rolling(window=7, min_periods=1).mean()
+        breakdown_7d = breakdown_signals.rolling(window=7, min_periods=1).mean()
+        expansion_7d = expansion_signals.rolling(window=7, min_periods=1).mean()
+        range_bound_7d = range_bound_signals.rolling(window=7, min_periods=1).mean()
+
+        # Streak analysis for each pattern
+        breakout_streaks = self._calculate_streaks(patterns, 1)
+        breakdown_streaks = self._calculate_streaks(patterns, 2)
+        expansion_streaks = self._calculate_streaks(patterns, 3)
+        range_bound_streaks = self._calculate_streaks(patterns, 4)
+
+        # Market regime analysis
+        market_regime = self._get_market_regime(
+            patterns[-10:] if len(patterns) >= 10 else patterns
+        )
 
         # Monthly pattern distribution
-        monthly_dist = self._get_monthly_pattern_distribution(pattern_series)
+        monthly_patterns = self._get_monthly_patterns(pattern_series)
 
-        sequence_analysis = {
-            "consecutive_patterns": consecutive_analysis,
-            "pattern_transitions": transitions,
-            "monthly_distribution": monthly_dist,
-            "most_common_pattern": max(patterns, key=patterns.count),
-            "least_common_pattern": min(patterns, key=patterns.count),
+        behavior_analysis = {
+            "market_regime": market_regime,
+            "pattern_streaks": {
+                "high_breakout": breakout_streaks,
+                "low_breakdown": breakdown_streaks,
+                "range_expansion": expansion_streaks,
+                "range_bound": range_bound_streaks,
+            },
+            "monthly_patterns": monthly_patterns,
+            "trend_strength": {
+                "breakout_7d_avg": float(breakout_7d.iloc[-1]) if len(breakout_7d) > 0 else 0,
+                "breakdown_7d_avg": float(breakdown_7d.iloc[-1]) if len(breakdown_7d) > 0 else 0,
+                "expansion_7d_avg": float(expansion_7d.iloc[-1]) if len(expansion_7d) > 0 else 0,
+                "range_bound_7d_avg": float(range_bound_7d.iloc[-1]) if len(range_bound_7d) > 0 else 0,
+            },
         }
 
-        return sequence_analysis
+        return behavior_analysis
 
-    def _find_consecutive_patterns(
-        self, pattern_series: pd.Series, target_pattern: int
-    ) -> Dict[str, any]:
-        """Find consecutive occurrences of a specific pattern."""
-        is_target = pattern_series == target_pattern
+    def _calculate_streaks(self, patterns: List[int], target_pattern: int) -> Dict[str, any]:
+        """Calculate consecutive streaks for a specific pattern."""
+        if not patterns:
+            return {"max_streak": 0, "current_streak": 0, "total_occurrences": 0}
 
-        # Find consecutive groups
-        groups = (is_target != is_target.shift()).cumsum()
-        consecutive_groups = pattern_series[is_target].groupby(groups[is_target])
+        streaks = []
+        current_streak = 0
+        max_streak = 0
 
-        if consecutive_groups.ngroups == 0:
-            return {"max_consecutive": 0, "total_occurrences": 0, "sequences": []}
+        for pattern in patterns:
+            if pattern == target_pattern:
+                current_streak += 1
+                max_streak = max(max_streak, current_streak)
+            else:
+                if current_streak > 0:
+                    streaks.append(current_streak)
+                    current_streak = 0
 
-        sequence_lengths = consecutive_groups.size()
+        # Add final streak if it ends with target pattern
+        if current_streak > 0:
+            streaks.append(current_streak)
 
         return {
-            "max_consecutive": sequence_lengths.max(),
-            "total_occurrences": len(pattern_series[pattern_series == target_pattern]),
-            "sequences": sequence_lengths.tolist(),
+            "max_streak": max_streak,
+            "current_streak": current_streak,
+            "total_occurrences": patterns.count(target_pattern),
+            "all_streaks": streaks,
+            "avg_streak_length": np.mean(streaks) if streaks else 0,
         }
 
-    def _calculate_pattern_transitions(
-        self, patterns: List[int]
-    ) -> Dict[str, Dict[str, int]]:
-        """Calculate transition matrix between patterns."""
-        transitions = {}
+    def _get_market_regime(self, recent_patterns: List[int]) -> str:
+        """Determine current market regime from recent patterns."""
+        if not recent_patterns:
+            return "Unknown"
 
-        for from_pattern in range(1, 5):
-            transitions[from_pattern] = {}
-            for to_pattern in range(1, 5):
-                transitions[from_pattern][to_pattern] = 0
+        breakout_count = recent_patterns.count(1)
+        breakdown_count = recent_patterns.count(2)
+        expansion_count = recent_patterns.count(3)
+        range_bound_count = recent_patterns.count(4)
 
-        # Count transitions
-        for i in range(len(patterns) - 1):
-            from_pattern = patterns[i]
-            to_pattern = patterns[i + 1]
-            transitions[from_pattern][to_pattern] += 1
+        total = len(recent_patterns)
+        
+        # Determine dominant pattern
+        max_count = max(breakout_count, breakdown_count, expansion_count, range_bound_count)
+        
+        if max_count / total >= 0.5:  # Strong regime (50%+ of one pattern)
+            if breakout_count == max_count:
+                return "Strong Breakout Trend"
+            elif breakdown_count == max_count:
+                return "Strong Breakdown Trend"
+            elif expansion_count == max_count:
+                return "High Volatility"
+            else:
+                return "Range Bound"
+        elif (breakout_count + breakdown_count) / total >= 0.6:
+            return "Trending Market"
+        elif (expansion_count + range_bound_count) / total >= 0.6:
+            return "Consolidating Market"
+        else:
+            return "Mixed Regime"
 
-        return transitions
-
-    def _get_monthly_pattern_distribution(
-        self, pattern_series: pd.Series
-    ) -> Dict[str, Dict[int, int]]:
+    def _get_monthly_patterns(self, pattern_series: pd.Series) -> Dict[str, Dict[str, float]]:
         """Get pattern distribution by month."""
-        monthly_dist = {}
+        monthly_patterns = {}
 
         for month in range(1, 13):
             month_name = pd.to_datetime(f"2000-{month:02d}-01").strftime("%B")
-            monthly_patterns = pattern_series[pattern_series.index.month == month]
+            month_data = pattern_series[pattern_series.index.month == month]
 
-            month_counts = {}
-            for pattern in range(1, 5):
-                month_counts[pattern] = (monthly_patterns == pattern).sum()
+            if len(month_data) > 0:
+                breakout_pct = (month_data == 1).mean() * 100
+                breakdown_pct = (month_data == 2).mean() * 100
+                expansion_pct = (month_data == 3).mean() * 100
+                range_bound_pct = (month_data == 4).mean() * 100
 
-            monthly_dist[month_name] = month_counts
+                monthly_patterns[month_name] = {
+                    "high_breakout_percentage": breakout_pct,
+                    "low_breakdown_percentage": breakdown_pct,
+                    "range_expansion_percentage": expansion_pct,
+                    "range_bound_percentage": range_bound_pct,
+                    "total_days": len(month_data),
+                }
+            else:
+                monthly_patterns[month_name] = {
+                    "high_breakout_percentage": 0,
+                    "low_breakdown_percentage": 0,
+                    "range_expansion_percentage": 0,
+                    "range_bound_percentage": 0,
+                    "total_days": 0,
+                }
 
-        return monthly_dist
+        return monthly_patterns
 
-    def validate_pattern_classification(
-        self,
-        daily_candle: pd.Series,
-        prev_high: float,
-        prev_low: float,
-        expected_pattern: int,
+    def validate_daily_classification(
+        self, current_candle: pd.Series, previous_candle: pd.Series, expected_pattern: int
     ) -> bool:
         """
-        Validate pattern classification against expected result.
+        Validate daily classification against expected result.
 
         Args:
-            daily_candle: Daily OHLC data
-            prev_high: Previous day high
-            prev_low: Previous day low
+            current_candle: Current day OHLC data
+            previous_candle: Previous day OHLC data
             expected_pattern: Expected classification
 
         Returns:
             True if classification matches expected
         """
-        actual_pattern = self.analyze_daily_pattern(daily_candle, prev_high, prev_low)
+        actual_pattern = self.analyze_daily_pattern(current_candle, previous_candle)
         return actual_pattern == expected_pattern
 
     def batch_analyze_patterns(
         self, data: pd.DataFrame, start_date: str = None, end_date: str = None
     ) -> List[Dict]:
         """
-        Analyze patterns for multiple days in batch.
+        Analyze daily patterns for multiple days in batch.
 
         Args:
             data: Full daily price data
@@ -295,48 +433,48 @@ class DailyPatternAnalyzer:
             end_date: End date for analysis
 
         Returns:
-            List of pattern analysis results
+            List of daily pattern analysis results
         """
         results = []
         errors = []
 
-        # Get date range for analysis
+        # Get date range for analysis - need to start from second day (need previous day)
         if start_date:
             start_dt = pd.to_datetime(start_date)
         else:
-            start_dt = data.index[1]  # Start after first day (need previous day)
+            start_dt = data.index[1]  # Start from second day
 
         if end_date:
             end_dt = pd.to_datetime(end_date)
         else:
             end_dt = data.index[-1]
 
-        # Filter analysis dates
+        # Filter analysis dates (skip first day as we need previous day data)
         analysis_dates = data.loc[start_dt:end_dt].index
 
-        self.logger.info(f"Analyzing patterns for {len(analysis_dates)} trading days")
+        self.logger.info(
+            f"Analyzing daily patterns for {len(analysis_dates)} trading days"
+        )
 
         for i, analysis_date in enumerate(analysis_dates):
             try:
                 # Get current day candle
-                daily_candle = data.loc[analysis_date]
+                current_candle = data.loc[analysis_date]
+                
+                # Get previous day candle
+                current_index = data.index.get_loc(analysis_date)
+                if current_index == 0:
+                    continue  # Skip first day
+                previous_candle = data.iloc[current_index - 1]
 
-                # Get previous day levels
-                prev_idx = data.index.get_indexer([analysis_date])[0] - 1
-                if prev_idx < 0:
-                    continue
+                # Analyze daily pattern
+                pattern = self.analyze_daily_pattern(current_candle, previous_candle)
 
-                prev_day = data.iloc[prev_idx]
-                prev_high = float(prev_day["High"])
-                prev_low = float(prev_day["Low"])
-
-                # Analyze pattern
-                pattern = self.analyze_daily_pattern(daily_candle, prev_high, prev_low)
-
-                # Extract features
-                features = self.extract_numerical_features(
-                    daily_candle, prev_high, prev_low
-                )
+                # Extract comprehensive features
+                features = self.extract_candle_features(current_candle, previous_candle)
+                
+                # Extract numerical features for the model
+                numerical_features = self.extract_numerical_features(current_candle, previous_candle)
 
                 # Create result
                 result = {
@@ -344,20 +482,25 @@ class DailyPatternAnalyzer:
                     "pattern": pattern,
                     "pattern_label": self.classification_config["labels"][pattern],
                     "features": features,
-                    "prev_high": prev_high,
-                    "prev_low": prev_low,
-                    "daily_ohlc": {
-                        "open": float(daily_candle["Open"]),
-                        "high": float(daily_candle["High"]),
-                        "low": float(daily_candle["Low"]),
-                        "close": float(daily_candle["Close"]),
+                    "numerical_features": numerical_features,
+                    "current_ohlc": {
+                        "open": float(current_candle["Open"]),
+                        "high": float(current_candle["High"]),
+                        "low": float(current_candle["Low"]),
+                        "close": float(current_candle["Close"]),
+                    },
+                    "previous_levels": {
+                        "high": float(previous_candle["High"]),
+                        "low": float(previous_candle["Low"]),
                     },
                 }
 
                 results.append(result)
 
                 if (i + 1) % 100 == 0:
-                    self.logger.info(f"Analyzed {i + 1}/{len(analysis_dates)} patterns")
+                    self.logger.info(
+                        f"Analyzed {i + 1}/{len(analysis_dates)} daily patterns"
+                    )
 
             except Exception as e:
                 error_msg = f"Error analyzing {analysis_date}: {e}"
@@ -365,7 +508,7 @@ class DailyPatternAnalyzer:
                 errors.append(error_msg)
 
         self.logger.info(
-            f"Batch analysis complete: {len(results)} patterns, {len(errors)} errors"
+            f"Daily batch analysis complete: {len(results)} patterns, {len(errors)} errors"
         )
 
         if errors:
@@ -384,45 +527,35 @@ def main():
         # Initialize analyzer
         analyzer = DailyPatternAnalyzer()
 
-        # Load test data
-        test_data_path = "data/metadata/test_nq_data.csv"
-
-        if not os.path.exists(test_data_path):
-            print("❌ Test data not found. Run stooq_fetcher.py first.")
-            return 1
-
-        # Load data
-        data = pd.read_csv(test_data_path, index_col=0, parse_dates=True)
-        print(f"📊 Loaded {len(data)} daily bars")
-
-        # Test single pattern analysis
-        test_date = data.index[-10]  # 10 days from end
-        daily_candle = data.loc[test_date]
-
-        # Get previous day levels
-        prev_idx = data.index.get_indexer([test_date])[0] - 1
-        prev_day = data.iloc[prev_idx]
-        prev_high = float(prev_day["High"])
-        prev_low = float(prev_day["Low"])
-
-        # Analyze pattern
-        pattern = analyzer.analyze_daily_pattern(daily_candle, prev_high, prev_low)
-        features = analyzer.extract_numerical_features(
-            daily_candle, prev_high, prev_low
+        # Create test data with previous day context
+        test_data = pd.DataFrame(
+            {
+                "Open": [100.0, 105.0, 102.0, 108.0, 110.0, 109.0],
+                "High": [102.0, 107.0, 104.0, 109.0, 112.0, 111.0],
+                "Low": [99.0, 104.0, 100.0, 107.0, 109.0, 108.0],
+                "Close": [101.0, 104.0, 103.0, 108.5, 111.0, 110.0],
+            },
+            index=pd.date_range("2023-01-01", periods=6),
         )
 
-        print(f"✅ Single pattern analysis:")
-        print(f"   📅 Date: {test_date.date()}")
-        print(
-            f"   🎯 Pattern: {pattern} ({analyzer.classification_config['labels'][pattern]})"
-        )
-        print(f"   📊 Features: {features}")
+        print(f"📊 Created test data with {len(test_data)} daily bars")
 
-        # Test batch analysis (last 50 days)
-        recent_start = data.index[-50]
-        results = analyzer.batch_analyze_patterns(
-            data=data, start_date=recent_start.strftime("%Y-%m-%d")
-        )
+        # Test single pattern analysis (need current + previous day)
+        current_candle = test_data.iloc[1]  # Second day
+        previous_candle = test_data.iloc[0]  # First day
+
+        pattern = analyzer.analyze_daily_pattern(current_candle, previous_candle)
+        features = analyzer.extract_candle_features(current_candle, previous_candle)
+        numerical_features = analyzer.extract_numerical_features(current_candle, previous_candle)
+
+        print(f"✅ Single daily pattern analysis:")
+        print(f"   📅 Date: {test_data.index[1].date()}")
+        print(f"   🎯 Pattern: {pattern} ({analyzer.classification_config['labels'][pattern]})")
+        print(f"   📊 Numerical Features: {numerical_features}")
+        print(f"   📈 All Features: {features}")
+
+        # Test batch analysis
+        results = analyzer.batch_analyze_patterns(test_data)
 
         print(f"📈 Batch analysis: {len(results)} patterns analyzed")
 
@@ -430,20 +563,21 @@ def main():
         patterns = [r["pattern"] for r in results]
         stats = analyzer.get_pattern_statistics(patterns)
 
-        print(f"📊 Pattern Distribution:")
+        print(f"📊 Daily Pattern Distribution:")
         for pattern, count in stats["pattern_counts"].items():
             label = stats["pattern_labels"][pattern]
             percentage = stats["pattern_percentages"][pattern]
             print(f"   {pattern}: {label} - {count} ({percentage:.1f}%)")
 
-        # Test sequence analysis
+        # Test market behavior analysis
         dates = [r["date"] for r in results]
-        sequence_analysis = analyzer.analyze_pattern_sequences(patterns, dates)
+        behavior_analysis = analyzer.analyze_market_behavior(patterns, dates)
 
-        print(f"🔄 Most common pattern: {sequence_analysis['most_common_pattern']}")
-        print(f"🔄 Least common pattern: {sequence_analysis['least_common_pattern']}")
+        print(f"💹 Market Regime: {behavior_analysis['market_regime']}")
+        print(f"🚀 Max Breakout Streak: {behavior_analysis['pattern_streaks']['high_breakout']['max_streak']}")
+        print(f"📉 Max Breakdown Streak: {behavior_analysis['pattern_streaks']['low_breakdown']['max_streak']}")
 
-        print("✅ Pattern analyzer test completed successfully!")
+        print("✅ Daily pattern analyzer test completed successfully!")
 
     except Exception as e:
         print(f"❌ Error: {e}")
