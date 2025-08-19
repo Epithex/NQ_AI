@@ -1,0 +1,234 @@
+# NQ_AI 4-Class Hybrid Daily ViT Model Configuration V2
+# Optimized for Multi-Instrument Training (DOW + NASDAQ + SP500)
+# Key improvements: No early stopping, enhanced hyperparameters, focal loss
+
+# Multi-Instrument Data Configuration (Excel-based) - OPTIMIZED
+data:
+  # Excel data source configuration
+  source: "excel"
+  excel_file: "data/Futures_Data_Consolidated.xlsx"
+  
+  # Available instruments for selection
+  available_instruments: ["DOW", "NASDAQ", "SP500", "ALL"]
+  
+  # Multi-instrument training (optimized)
+  instruments: ["DOW", "NASDAQ", "SP500"]
+  
+  # Instrument to Excel sheet mapping
+  instrument_config:
+    DOW:
+      sheet: "DowJones"
+      display_name: "Dow Jones E-mini"
+    NASDAQ:
+      sheet: "Nasdaq" 
+      display_name: "NASDAQ-100 E-mini"
+    SP500:
+      sheet: "SP500"
+      display_name: "S&P 500 E-mini"
+  
+  # Data parameters
+  timeframe: "daily"
+  bars_per_chart: 30  # 30 daily bars per chart (6 weeks context)
+  start_year: 2000
+  end_year: 2025
+  
+# Daily Hybrid Chart Generation (with Previous Day Level Lines)
+chart:
+  width: 12
+  height: 8
+  dpi: 100
+  image_size: 224        # ViT-Base input size
+  style: "yahoo"
+  volume: false
+  title: false           # Clean visual appearance
+  grid: false            # No grid for cleaner charts
+  axes_labels: false     # No text overlays
+  show_prev_day_lines: true     # Enable previous day level reference lines
+  prev_day_line_colors:
+    high: "#2ca02c"      # Green for previous day high
+    low: "#d62728"       # Red for previous day low
+  line_style: "-"        # Solid lines for reference levels
+  line_width: 1.5        # Slightly thicker for visibility
+  
+# 4-Class Previous Day Levels Classification
+classification:
+  num_classes: 4
+  labels:
+    1: "High Breakout"     # Current high >= prev high, current low > prev low
+    2: "Low Breakdown"     # Current low <= prev low, current high < prev high
+    3: "Range Expansion"   # Current high >= prev high, current low <= prev low
+    4: "Range Bound"       # Current high < prev high, current low > prev low
+  classification_type: "previous_day_levels"
+  method: "high_low_vs_previous_levels"
+  
+  # TensorFlow mapping (0-3 internal, 1-4 interpretable)
+  tf_labels:
+    0: "High Breakout"
+    1: "Low Breakdown"
+    2: "Range Expansion"
+    3: "Range Bound"
+    
+# Hybrid Features Configuration (Visual + Numerical) - ENHANCED
+features:
+  numerical_features: 3   # 3 key numerical features for fusion
+  feature_names:
+    - "distance_to_prev_high"    # (current_high - prev_high) / prev_high
+    - "distance_to_prev_low"     # (current_low - prev_low) / prev_low
+    - "prev_day_range"           # (prev_high - prev_low) / prev_low
+  candle_features: true   # Extract additional candle metrics for analysis
+  visual_features: true   # Chart images with reference lines
+  feature_fusion_method: "early_fusion"  # Combine after separate processing
+    
+# Hybrid ViT Model Configuration V2 - OPTIMIZED
+model:
+  # ViT-Base Architecture (Visual Branch) - Same 87M parameters
+  name: "hybrid_daily_vit_base_patch16_224"
+  image_size: 224
+  patch_size: 16
+  hidden_size: 768          # ViT-Base hidden dimension
+  num_layers: 12            # ViT-Base transformer layers
+  num_heads: 12             # ViT-Base attention heads
+  mlp_dim: 3072             # ViT-Base MLP dimension
+  dropout_rate: 0.2         # INCREASED from 0.15 for better regularization
+  
+  # 4-Class Hybrid Training Parameters - OPTIMIZED
+  batch_size: 32            # INCREASED from 24 for better gradient stability
+  learning_rate: 0.0001     # INCREASED from 0.00008 for faster convergence
+  epochs: 75                # INCREASED from 50 for full convergence
+  weight_decay: 0.02        # INCREASED from 0.01 for better generalization
+  
+  # Hybrid Architecture Configuration
+  visual_only: false        # Hybrid: visual + numerical
+  use_feature_fusion: true  # Enable numerical feature fusion
+  classification_head_size: 512  # Size of final classification layer
+  
+  # Numerical Feature Branch Configuration - ENHANCED
+  numerical_dense_layers: [64, 32, 16]  # Dense layers for numerical features
+  numerical_dropout: 0.3    # INCREASED from 0.15 for better regularization
+  numerical_activation: "relu"  # Activation for numerical layers
+  
+  # Feature Fusion Configuration - IMPROVED
+  fusion_method: "concatenate"  # Concatenate visual + numerical features
+  fusion_dense_layers: [512, 256]  # Dense layers after fusion
+  fusion_dropout: 0.2       # INCREASED from 0.15 for regularization
+  
+  # Advanced Features V2
+  label_smoothing: 0.1      # NEW: Label smoothing for better generalization
+  focal_loss: true          # NEW: Focal loss for class imbalance
+  focal_alpha: 0.25         # NEW: Focal loss alpha parameter
+  focal_gamma: 2.0          # NEW: Focal loss gamma parameter
+    
+# Training Configuration V2 - NO EARLY STOPPING
+training:
+  # Data splits (across all instruments)
+  train_split: 0.8          # 80% training (~15K samples)
+  val_split: 0.1            # 10% validation (~1.9K samples)  
+  test_split: 0.1           # 10% test (~1.9K samples)
+  
+  # 4-class hybrid specific - IMPROVED
+  use_class_weights: true   # Handle 4-class imbalance
+  expected_class_distribution:
+    high_breakout: 0.42     # Updated based on actual data (41.9%)
+    low_breakdown: 0.33     # Updated based on actual data (32.7%)
+    range_expansion: 0.14   # Updated based on actual data (13.6%)
+    range_bound: 0.11       # Updated based on actual data (11.8%)
+  
+  data_augmentation: false  # No augmentation for financial charts
+  
+  # Training optimizations V2 - ENHANCED
+  mixed_precision: true     # ENABLED for faster training with large dataset
+  gradient_clipping: true   # Stabilize hybrid training
+  gradient_clip_norm: 1.0
+  gradient_accumulation_steps: 2  # NEW: Effective batch size 64
+  
+  # Learning rate scheduling V2 - FIXED CONFLICT
+  lr_scheduling: false      # DISABLED to prevent optimizer conflict
+  lr_schedule: "fixed"      # Use fixed learning rate only
+  warmup_epochs: 0          # No warmup needed for fixed rate
+  
+  # NO EARLY STOPPING - KEY CHANGE
+  early_stopping: false    # DISABLED - train full 75 epochs
+  early_stopping_patience: null  # Not used
+  checkpoint_frequency: 15  # Save every 15 epochs (5 total checkpoints)
+  
+  # 4-class hybrid metrics
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1_score"
+    - "auc"
+    - "top_2_accuracy"  # Useful for 4-class system
+  primary_metric: "f1_score"  # Best for multi-class classification
+  
+# Multi-Instrument Dataset Configuration V2
+dataset:
+  combine_instruments: true     # Train on combined dataset
+  stratify_by_instrument: false # Mix instruments in splits
+  expected_total_samples: 19000 # Actual: ~18,891 across all instruments
+  min_samples_per_instrument: 5000  # Minimum samples per instrument
+  
+  # 4-class specific - ENHANCED
+  balance_classes: true         # Ensure balanced pattern distribution
+  min_class_samples: 2000       # INCREASED minimum samples per class
+  class_balanced_sampling: true # NEW: Balanced sampling during training
+
+# Parallel Processing Configuration
+parallel:
+  # Worker settings
+  max_workers: 32               # Maximum parallel workers
+  default_workers: 8            # Default worker count if not specified
+  chunk_size: 100               # Samples per processing chunk
+  progress_reporting_interval: 100  # Report progress every N samples
+  
+  # Resource management (increased for hybrid processing)
+  timeout_seconds: 300          # Timeout per sample processing (5 minutes)
+  memory_limit_mb: 12288        # INCREASED memory limit per worker (12GB)
+  
+  # Error handling
+  max_retries: 2                # Retry failed samples
+  continue_on_errors: true      # Continue processing if some samples fail
+  
+# File Paths (Daily Hybrid V2)
+paths:
+  data_root: "data"
+  images: "data/images_daily"           # Daily charts with reference lines
+  labels: "data/labels_daily"           # 4-class hybrid labels
+  metadata: "data/metadata_daily"       # Daily hybrid metadata
+  models: "models"
+  outputs: "models/outputs_daily_v2"    # NEW: V2 model outputs
+  checkpoints: "models/outputs_daily_v2/checkpoints"
+  logs_dir: "logs"
+  tensorboard_logs: "models/outputs_daily_v2/logs"
+  
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+# System Information V2
+system:
+  name: "NQ_AI 4-Class Hybrid Daily ViT Model V2"
+  version: "4.1"
+  description: "Optimized Hybrid ViT-Base with enhanced training for multi-instrument 4-class classification"
+  architecture: "Hybrid ViT-Base (Visual + Numerical Fusion) - V2"
+  parameters: "87M+ (ViT-Base visual + enhanced numerical fusion layers)"
+  instruments: "DOW, NASDAQ, SP500 futures"
+  data_period: "25 years (2000-2025)"
+  total_samples: 18891
+  approach: "4-class hybrid learning V2 - multi-instrument with full convergence"
+  classification_method: "High/Low vs Previous Day High/Low levels"
+  key_improvements:
+    - "No early stopping - full 75 epoch training"
+    - "Increased learning rate and batch size"
+    - "Enhanced regularization (dropout, weight decay)"
+    - "Focal loss for class imbalance"
+    - "Label smoothing for generalization"
+    - "Mixed precision training"
+    - "Gradient accumulation"
+    - "Multi-instrument training with 18,891 samples"
+  patterns:
+    - "High Breakout: current_high >= prev_high && current_low > prev_low"
+    - "Low Breakdown: current_low <= prev_low && current_high < prev_high"
+    - "Range Expansion: current_high >= prev_high && current_low <= prev_low"
+    - "Range Bound: current_high < prev_high && current_low > prev_low"

@@ -125,3 +125,15 @@ pip-delete-this-directory.txt
 # Profiling data
 *.prof
 *.lprof
+
+# RunPod training results and legacy files
+runpod_training_results/
+legacy_training_logs/
+Legacy folder/
+*.tar.gz
+
+# Training artifacts
+confusion_matrix_*.png
+training_history_*.png
+daily_hybrid_training_results_*.json
+daily_hybrid_dataset_manifest_*.json

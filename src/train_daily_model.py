@@ -226,7 +226,7 @@ class HybridDailyTrainer:
             self.logger.error(f"Error creating callbacks: {e}")
             raise
     
-    def train_model(self):
+    def train_model(self, initial_epoch=0):
         """Train the hybrid daily ViT model."""
         try:
             self.logger.info("Starting 4-class hybrid ViT training")
@@ -260,6 +260,7 @@ class HybridDailyTrainer:
             self.history = self.model.fit(
                 self.train_dataset,
                 epochs=epochs,
+                initial_epoch=initial_epoch,
                 steps_per_epoch=train_steps,
                 validation_data=self.val_dataset,
                 validation_steps=val_steps,
@@ -529,13 +530,23 @@ def main():
         trainer.create_model()
         
         # Resume from checkpoint if specified
+        initial_epoch = 0
         if args.resume:
             print(f"🔄 Resuming from: {args.resume}")
             trainer.model.load_weights(args.resume)
+            
+            # Extract epoch number from checkpoint filename
+            import re
+            epoch_match = re.search(r'epoch_(\d+)', args.resume)
+            if epoch_match:
+                initial_epoch = int(epoch_match.group(1))
+                print(f"🔄 Resuming from epoch {initial_epoch} (will continue to epoch {trainer.config['model']['epochs']})")
+            else:
+                print("⚠️  Could not extract epoch number from checkpoint filename, starting from epoch 0")
         
         # Train model
         print("🎯 Starting hybrid training...")
-        trainer.train_model()
+        trainer.train_model(initial_epoch=initial_epoch)
         
         # Evaluate model
         print("📈 Evaluating hybrid model...")
