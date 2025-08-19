@@ -59,23 +59,24 @@ class DailyChartGenerator:
         instrument: str = "NQ"
     ) -> str:
         """
-        Generate daily visual 30-bar chart with previous day level reference lines.
+        Generate PREDICTIVE daily chart with previous day level reference lines.
+        Shows 30 historical bars EXCLUDING the analysis date for true prediction.
 
         Args:
-            analysis_date: The date being analyzed
+            analysis_date: The date being predicted (NOT shown in chart)
             data: Full daily price data
             previous_candle: Previous day OHLC data for reference lines
             instrument: Instrument identifier (NQ, ES, YM)
 
         Returns:
-            Path to saved chart image
+            Path to saved chart image showing historical context only
         """
         try:
             self.logger.info(
-                f"Generating daily chart for {instrument} on {analysis_date.date()}"
+                f"Generating PREDICTIVE chart for {instrument} predicting {analysis_date.date()}"
             )
 
-            # Get 30-bar chart window
+            # Get 30-bar chart window EXCLUDING analysis date (true prediction)
             chart_data = self.get_chart_window(analysis_date, data)
 
             # Validate chart data
@@ -86,12 +87,12 @@ class DailyChartGenerator:
             prev_high = float(previous_candle["High"])
             prev_low = float(previous_candle["Low"])
 
-            # Generate daily chart with reference lines (224x224 for ViT)
+            # Generate predictive chart with reference lines (224x224 for ViT)
             chart_path = self.create_daily_chart(
                 chart_data, analysis_date, instrument, prev_high, prev_low
             )
 
-            self.logger.info(f"Daily chart generated: {chart_path}")
+            self.logger.info(f"Predictive chart generated: {chart_path}")
             return chart_path
 
         except Exception as e:
@@ -102,14 +103,15 @@ class DailyChartGenerator:
         self, analysis_date: datetime, data: pd.DataFrame
     ) -> pd.DataFrame:
         """
-        Get 30-day chart window for 4-class classification.
+        Get 30-day chart window EXCLUDING the analysis date for true prediction.
+        Shows previous 30 days with reference lines, but NOT the current day being predicted.
 
         Args:
-            analysis_date: Date being analyzed
+            analysis_date: Date being analyzed (excluded from chart)
             data: Full daily price data
 
         Returns:
-            Chart data for 30 bars
+            Chart data for 30 bars BEFORE analysis date
         """
         # Convert to datetime if needed
         if isinstance(analysis_date, str):
@@ -121,11 +123,12 @@ class DailyChartGenerator:
         except (KeyError, IndexError):
             raise ValueError(f"Analysis date {analysis_date} not found in data")
 
-        # Calculate start index for 30-bar window
-        start_idx = max(0, analysis_idx - self.bars_per_chart + 1)
-        end_idx = analysis_idx + 1
+        # Calculate start index for 30-bar window BEFORE analysis date
+        # We want 30 bars ending the day BEFORE analysis_date
+        start_idx = max(0, analysis_idx - self.bars_per_chart)
+        end_idx = analysis_idx  # EXCLUDE analysis_date from chart
 
-        # Extract chart window
+        # Extract chart window (previous 30 days only)
         chart_data = data.iloc[start_idx:end_idx].copy()
 
         if len(chart_data) < self.bars_per_chart:
@@ -134,7 +137,7 @@ class DailyChartGenerator:
             )
 
         self.logger.debug(
-            f"Chart window: {chart_data.index[0]} to {chart_data.index[-1]} ({len(chart_data)} bars)"
+            f"Predictive chart window: {chart_data.index[0]} to {chart_data.index[-1]} ({len(chart_data)} bars) - EXCLUDES analysis date {analysis_date.date()}"
         )
 
         return chart_data
@@ -153,8 +156,8 @@ class DailyChartGenerator:
             self.logger.error("Chart data is empty")
             return False
 
-        # Check for required columns
-        required_columns = ["Open", "High", "Low", "Close"]
+        # Check for required columns (including volume for enhanced charts)
+        required_columns = ["Open", "High", "Low", "Close", "Volume"]
         if not all(col in chart_data.columns for col in required_columns):
             self.logger.error(f"Missing required columns: {required_columns}")
             return False
@@ -189,17 +192,18 @@ class DailyChartGenerator:
         prev_low: float
     ) -> str:
         """
-        Create daily chart WITH previous day level reference lines.
+        Create PREDICTIVE daily chart with previous day level reference lines.
+        Shows historical context only - the analysis date candle is NOT included.
 
         Args:
-            chart_data: 30-bar chart data
-            analysis_date: Date being analyzed
+            chart_data: 30-bar historical data (EXCLUDES analysis date)
+            analysis_date: Date being predicted (for filename only)
             instrument: Instrument identifier
             prev_high: Previous day high level (green line)
             prev_low: Previous day low level (red line)
 
         Returns:
-            Path to saved chart image
+            Path to saved predictive chart image
         """
         # Configure mplfinance style for 4-class classification
         style_config = {
@@ -229,17 +233,17 @@ class DailyChartGenerator:
             alpha=[0.8, 0.8]
         )
 
-        # Configure plot settings for 4-class classification
+        # Configure plot settings for 4-class classification with volume
         plot_config = {
             "type": "candle",
             "style": daily_style,
             "figsize": (self.chart_config["width"], self.chart_config["height"]),
-            "volume": self.chart_config["volume"],
+            "volume": True,  # Always show volume bars
             "ylabel": "",
             "ylabel_lower": "",
             "tight_layout": True,
             "scale_padding": {"left": 0.3, "top": 0.8, "right": 0.5, "bottom": 0.8},
-            "panel_ratios": (1,),
+            "panel_ratios": (3, 1),  # 3:1 ratio for price:volume panels
             "figratio": (1, 1),  # Square aspect ratio for 224x224
             "figscale": 1.0,
             "update_width_config": dict(candle_linewidth=1.0, candle_width=0.6),
@@ -452,12 +456,19 @@ def main():
             high_price = max(high_price, open_price, close_price)
             low_price = min(low_price, open_price, close_price)
 
+            # Generate realistic volume (higher volume on larger price moves)
+            price_change = abs(close_price - open_price)
+            base_volume = np.random.lognormal(15, 0.5)  # Realistic volume distribution
+            volume_multiplier = 1 + (price_change / open_price) * 10  # Higher volume on bigger moves
+            volume = int(base_volume * volume_multiplier)
+
             test_data.append(
                 {
                     "Open": open_price,
                     "High": high_price,
                     "Low": low_price,
                     "Close": close_price,
+                    "Volume": volume,
                 }
             )
 
