@@ -233,20 +233,30 @@ class DailyChartGenerator:
             alpha=[0.8, 0.8]
         )
 
-        # Configure plot settings for 4-class classification with volume
+        # Enhanced plot settings optimized for higher resolution (448x448 support)
+        volume_enabled = self.chart_config.get("volume", True)
+        
+        # Adjust line widths and candle widths based on image resolution
+        line_scale = self.image_size / 224.0  # Scale factor (1.0 for 224, 2.0 for 448)
+        candle_linewidth = max(0.8, 1.0 * line_scale)
+        candle_width = min(0.8, max(0.4, 0.6 * line_scale))
+        
         plot_config = {
             "type": "candle",
             "style": daily_style,
             "figsize": (self.chart_config["width"], self.chart_config["height"]),
-            "volume": True,  # Always show volume bars
+            "volume": volume_enabled,
             "ylabel": "",
             "ylabel_lower": "",
             "tight_layout": True,
             "scale_padding": {"left": 0.3, "top": 0.8, "right": 0.5, "bottom": 0.8},
-            "panel_ratios": (3, 1),  # 3:1 ratio for price:volume panels
-            "figratio": (1, 1),  # Square aspect ratio for 224x224
-            "figscale": 1.0,
-            "update_width_config": dict(candle_linewidth=1.0, candle_width=0.6),
+            "panel_ratios": (3, 1) if volume_enabled else (1,),  # Conditional volume panel
+            "figratio": (1, 1),  # Square aspect ratio for ViT input
+            "figscale": max(1.0, line_scale * 0.8),  # Scale for higher resolution
+            "update_width_config": dict(
+                candle_linewidth=candle_linewidth, 
+                candle_width=candle_width
+            ),
             "hlines": hlines,  # Add previous day level reference lines
         }
 
@@ -275,8 +285,11 @@ class DailyChartGenerator:
                 **plot_config,
             )
 
-            # Add reference line labels if enabled
+            # Add reference line labels if enabled (scaled for resolution)
             if self.chart_config.get("reference_labels", True):
+                # Scale font size based on image resolution
+                label_fontsize = max(8, int(8 * line_scale))
+                
                 for ax in axes:
                     # Add text labels for previous day levels
                     y_range = ax.get_ylim()
@@ -285,19 +298,21 @@ class DailyChartGenerator:
                     # Position labels on the right side
                     label_x = x_range[1] - (x_range[1] - x_range[0]) * 0.05
                     
-                    # Previous high label (green)
+                    # Previous high label (green) - enhanced for higher resolution
                     if y_range[0] <= prev_high <= y_range[1]:
                         ax.text(label_x, prev_high, "Prev H", 
-                               color="#2ca02c", fontsize=8, fontweight="bold",
+                               color="#2ca02c", fontsize=label_fontsize, fontweight="bold",
                                ha="right", va="center", 
-                               bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.8))
+                               bbox=dict(boxstyle="round,pad=0.3", facecolor="white", 
+                                       alpha=0.9, edgecolor="#2ca02c", linewidth=1))
                     
-                    # Previous low label (red)
+                    # Previous low label (red) - enhanced for higher resolution
                     if y_range[0] <= prev_low <= y_range[1]:
                         ax.text(label_x, prev_low, "Prev L", 
-                               color="#d62728", fontsize=8, fontweight="bold",
+                               color="#d62728", fontsize=label_fontsize, fontweight="bold",
                                ha="right", va="center",
-                               bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.8))
+                               bbox=dict(boxstyle="round,pad=0.3", facecolor="white", 
+                                       alpha=0.9, edgecolor="#d62728", linewidth=1))
 
             # Clean up the chart for 4-class classification
             if not self.chart_config.get("axes_labels", True):
@@ -326,7 +341,7 @@ class DailyChartGenerator:
 
     def resize_chart_image(self, chart_path: str):
         """
-        Resize chart image to exact ViT input size (224x224).
+        Resize chart image to exact ViT input size (224x224 or 448x448 for pure visual).
 
         Args:
             chart_path: Path to chart image
@@ -340,15 +355,18 @@ class DailyChartGenerator:
                 if img.mode != "RGB":
                     img = img.convert("RGB")
 
-                # Resize to exact ViT input size
+                # Resize to exact ViT input size (supports both 224 and 448)
                 resized_img = img.resize(
                     (self.image_size, self.image_size), Image.Resampling.LANCZOS
                 )
 
+                # For higher resolution (448x448), use higher quality
+                quality = 98 if self.image_size >= 448 else 95
+                
                 # Save resized image
-                resized_img.save(chart_path, "PNG", quality=95)
+                resized_img.save(chart_path, "PNG", quality=quality, optimize=True)
 
-            self.logger.debug(f"Chart resized to {self.image_size}x{self.image_size}")
+            self.logger.debug(f"Chart resized to {self.image_size}x{self.image_size} (quality={quality})")
 
         except ImportError:
             self.logger.warning("PIL not available for image resizing")

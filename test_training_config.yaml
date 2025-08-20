@@ -1,0 +1,199 @@
+# Test Configuration for Pure Visual Training (Quick Test)
+# Copy of config_pure_visual_daily.yaml with reduced epochs for testing
+
+# Excel Data Configuration (Daily Only)
+data:
+  # Excel data source configuration
+  source: "excel"
+  excel_file: "data/Futures_Data_Consolidated.xlsx"
+  
+  # Available instruments for selection
+  available_instruments: ["DOW", "NASDAQ", "SP500", "ALL"]
+  
+  # Default instruments (can be overridden via command line)
+  instruments: ["DOW", "NASDAQ", "SP500"]
+  
+  # Instrument to Excel sheet mapping
+  instrument_config:
+    DOW:
+      sheet: "DowJones"
+      display_name: "Dow Jones E-mini"
+    NASDAQ:
+      sheet: "Nasdaq" 
+      display_name: "NASDAQ-100 E-mini"
+    SP500:
+      sheet: "SP500"
+      display_name: "S&P 500 E-mini"
+  
+  # Data parameters
+  timeframe: "daily"
+  bars_per_chart: 30  # 30 daily bars per chart (6 weeks context)
+  start_year: 2000
+  end_year: 2025
+  
+# Pure Visual Chart Generation (448x448 High Resolution)
+chart:
+  width: 12
+  height: 8
+  dpi: 150              # Higher DPI for 448x448 clarity
+  image_size: 448       # Higher resolution for "The Test"
+  style: "yahoo"
+  volume: true          # Include volume for enhanced visual learning
+  title: false          # Clean visual appearance
+  grid: false           # No grid for cleaner charts
+  axes_labels: false    # No text overlays
+  show_prev_day_lines: true     # Enable previous day level reference lines
+  prev_day_line_colors:
+    high: "#2ca02c"     # Green for previous day high
+    low: "#d62728"      # Red for previous day low
+  line_style: "-"       # Solid lines for reference levels
+  line_width: 2.0       # Thicker lines for 448x448 visibility
+  reference_labels: true # Add "Prev H" and "Prev L" labels
+  
+# 4-Class Previous Day Levels Classification (Same as Hybrid)
+classification:
+  num_classes: 4
+  labels:
+    1: "High Breakout"     # Current high >= prev high, current low > prev low
+    2: "Low Breakdown"     # Current low <= prev low, current high < prev high
+    3: "Range Expansion"   # Current high >= prev high, current low <= prev low
+    4: "Range Bound"       # Current high < prev high, current low > prev low
+  classification_type: "previous_day_levels"
+  method: "high_low_vs_previous_levels"
+  
+  # TensorFlow mapping (0-3 internal, 1-4 interpretable)
+  tf_labels:
+    0: "High Breakout"
+    1: "Low Breakdown"
+    2: "Range Expansion"
+    3: "Range Bound"
+    
+# Pure Visual Configuration (NO Numerical Features)
+features:
+  numerical_features: 0   # Pure visual approach - NO numerical crutch
+  feature_names: []       # No numerical features
+  candle_features: false  # No numerical candle analysis
+  visual_features: true   # Chart images only
+  feature_fusion_method: "none"  # No fusion needed
+    
+# Pure Visual ViT Model Configuration (448x448)
+model:
+  # ViT-Base Architecture (Pure Visual)
+  name: "pure_visual_vit_base_patch16_448"
+  image_size: 448         # Higher resolution for "The Test"
+  patch_size: 16          # Standard ViT-Base patch size
+  hidden_size: 768        # ViT-Base hidden dimension
+  num_layers: 12          # ViT-Base transformer layers
+  num_heads: 12           # ViT-Base attention heads
+  mlp_dim: 3072           # ViT-Base MLP dimension
+  dropout_rate: 0.1       # Reduced for pure visual learning
+  
+  # Pure Visual Training Parameters
+  batch_size: 8           # Smaller batch size for testing
+  learning_rate: 0.0001   # Standard ViT learning rate for visual tasks
+  epochs: 3               # REDUCED TO 3 FOR TESTING
+  weight_decay: 0.01
+  
+  # Pure Visual Mode (NO numerical branch)
+  visual_only: true       # Pure visual learning
+  use_feature_fusion: false # No numerical feature fusion
+  classification_head_size: 768  # Match ViT hidden size
+  
+# Pure Visual Training Configuration
+training:
+  # Data splits (NASDAQ only for "The Test")
+  train_split: 0.8        # 80% training (~5K samples)
+  val_split: 0.1          # 10% validation (~650 samples)  
+  test_split: 0.1         # 10% test (~650 samples)
+  
+  # Pure visual specific
+  use_class_weights: true # Handle 4-class imbalance
+  expected_class_distribution:
+    high_breakout: 0.25   # Expected ~25% high breakout patterns
+    low_breakdown: 0.25   # Expected ~25% low breakdown patterns
+    range_expansion: 0.25 # Expected ~25% range expansion patterns
+    range_bound: 0.25     # Expected ~25% range bound patterns
+  
+  data_augmentation: false # No augmentation for financial charts
+  
+  # Training optimizations for 448x448
+  mixed_precision: false   # DISABLED for testing to avoid issues
+  gradient_clipping: true # Stabilize training
+  gradient_clip_norm: 1.0
+  
+  # Learning rate scheduling
+  lr_scheduling: true
+  lr_schedule: "cosine_decay"
+  warmup_epochs: 1       # Reduced warmup for testing
+  
+  # NO Early stopping (as requested)
+  early_stopping: false   # Train for full epoch count
+  checkpoint_frequency: 2  # Save every 2 epochs for testing
+  
+  # Pure visual metrics (simplified)
+  metrics:
+    - "accuracy"
+    - "sparse_categorical_accuracy"
+  primary_metric: "accuracy"  # Simple accuracy for "The Test"
+  
+# Multi-Instrument Dataset Configuration
+dataset:
+  combine_instruments: true     # Train on combined dataset
+  stratify_by_instrument: false # Mix instruments in splits
+  expected_total_samples: 19000 # Approximate total across all instruments
+  min_samples_per_instrument: 6000  # Minimum samples per instrument
+  
+  # 4-class specific
+  balance_classes: true         # Ensure balanced pattern distribution
+  min_class_samples: 500        # Minimum samples per class
+
+# Parallel Processing Configuration (Optimized for 448x448)
+parallel:
+  # Worker settings (reduced for larger images)
+  max_workers: 16               # Reduced for memory constraints
+  default_workers: 8            # Conservative default
+  chunk_size: 50                # Smaller chunks for 448x448 processing
+  progress_reporting_interval: 100
+  
+  # Resource management (increased for 448x448 processing)
+  timeout_seconds: 600          # Longer timeout for higher resolution
+  memory_limit_mb: 16384        # More memory per worker (16GB)
+  
+  # Error handling
+  max_retries: 2
+  continue_on_errors: true
+
+# File Paths (Pure Visual Daily)
+paths:
+  data_root: "data"
+  images: "data/images_pure_visual"      # Pure visual charts (448x448)
+  labels: "data/labels_pure_visual"      # Pure visual labels
+  metadata: "data/metadata_pure_visual"  # Pure visual metadata
+  models: "models"
+  outputs: "models/outputs_pure_visual_test"  # TEST OUTPUT DIR
+  checkpoints: "models/outputs_pure_visual_test/checkpoints"
+  logs_dir: "logs"
+  tensorboard_logs: "models/outputs_pure_visual_test/logs"
+  
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+# System Information
+system:
+  name: "NQ_AI Pure Visual Daily ViT Model - TEST"
+  version: "1.0"
+  description: "Pure visual ViT-Base for 4-class previous day levels classification - NO numerical features"
+  architecture: "Pure Visual ViT-Base (Visual ONLY)"
+  parameters: "87M+ (ViT-Base visual only - no fusion layers)"
+  instruments: "DOW, NASDAQ, SP500 futures"
+  data_period: "25 years (2000-2025)"
+  expected_samples: 19000
+  approach: "Pure visual learning - NO numerical features"
+  classification_method: "High/Low vs Previous Day High/Low levels"
+  patterns:
+    - "High Breakout: current_high >= prev_high && current_low > prev_low"
+    - "Low Breakdown: current_low <= prev_low && current_high < prev_high"
+    - "Range Expansion: current_high >= prev_high && current_low <= prev_low"
+    - "Range Bound: current_high < prev_high && current_low > prev_low"

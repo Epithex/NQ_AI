@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Pure Visual ViT-Base Model for Multi-Instrument Pattern Classification
-87M parameter Google ViT-Base-Patch16-224 optimized for pure visual learning
+Pure Visual ViT Model for "The Test" - 4-Class Previous Day Levels Classification
+NO numerical features, pure visual learning from 448x448 chart images only
+Tests if ViT can learn patterns without numerical crutch
 """
 
 import tensorflow as tf
@@ -16,9 +17,9 @@ from datetime import datetime
 
 
 class PureVisualViTModel:
-    """Pure visual ViT-Base model for chart pattern classification."""
+    """Pure visual ViT model for testing visual learning without numerical crutch."""
 
-    def __init__(self, config_path: str = "config/config_pure_visual.yaml"):
+    def __init__(self, config_path: str = "config/config_pure_visual_daily.yaml"):
         """Initialize the pure visual ViT-Base model."""
         self.config = self.load_config(config_path)
         self.model_config = self.config["model"]
@@ -41,18 +42,19 @@ class PureVisualViTModel:
             level=getattr(logging, self.config["logging"]["level"]),
             format=self.config["logging"]["format"],
             handlers=[
-                logging.FileHandler(f"{log_dir}/pure_visual_vit.log"),
+                logging.FileHandler(f"{log_dir}/pure_visual_vit_model.log"),
                 logging.StreamHandler(),
             ],
         )
         self.logger = logging.getLogger(__name__)
 
     def create_patch_embedding(self, input_layer):
-        """Create patch embedding layer for ViT."""
+        """Create patch embedding layer for ViT (supports 448x448)."""
         patch_size = self.model_config["patch_size"]
         hidden_size = self.model_config["hidden_size"]
+        image_size = self.model_config["image_size"]
 
-        # Extract patches
+        # Extract patches (works for both 224x224 and 448x448)
         patches = layers.Conv2D(
             filters=hidden_size,
             kernel_size=patch_size,
@@ -61,13 +63,13 @@ class PureVisualViTModel:
             name="patch_embedding",
         )(input_layer)
 
+        # Calculate number of patches (224->196, 448->784)
+        num_patches = (image_size // patch_size) ** 2
+
         # Reshape to sequence format
-        batch_size = tf.shape(patches)[0]
-        patch_dims = patches.shape[-1]
-        num_patches = tf.shape(patches)[1] * tf.shape(patches)[2]
+        patches = layers.Reshape((num_patches, hidden_size))(patches)
 
-        patches = layers.Reshape((num_patches, patch_dims))(patches)
-
+        self.logger.debug(f"Patch embedding: {image_size}x{image_size} -> {num_patches} patches")
         return patches
 
     def add_positional_encoding(self, patches):
@@ -140,22 +142,28 @@ class PureVisualViTModel:
 
     def create_model(self) -> keras.Model:
         """
-        Create pure visual ViT-Base model.
+        Create pure visual ViT model for "The Test".
+        NO numerical features - only visual chart analysis.
 
         Returns:
-            Complete pure visual model
+            Pure visual model for 4-class classification
         """
-        self.logger.info("Creating pure visual ViT-Base model...")
+        self.logger.info("Creating PURE VISUAL ViT model for 'The Test'...")
 
         image_size = self.model_config["image_size"]
         hidden_size = self.model_config["hidden_size"]
         num_layers = self.model_config["num_layers"]
-        num_classes = self.config["classification"]["num_classes"]
+        num_classes = 4  # 4-class classification
+        patch_size = self.model_config["patch_size"]
+        classification_head_size = self.model_config["classification_head_size"]
 
-        # Input layer (pure visual - no numerical features)
+        # SINGLE INPUT: Chart images only (NO numerical input)
         image_input = layers.Input(
             shape=(image_size, image_size, 3), name="chart_image"
         )
+
+        # === PURE VISUAL BRANCH (ViT-Base) ===
+        self.logger.info(f"ViT input size: {image_size}x{image_size} (pure visual)")
 
         # Patch embedding
         patches = self.create_patch_embedding(image_input)
@@ -212,36 +220,55 @@ class PureVisualViTModel:
         x = layers.LayerNormalization(epsilon=1e-6, name="final_ln")(x)
 
         # Extract class token representation
-        class_token_output = x[:, 0]  # First token is class token
+        visual_class_token = x[:, 0]  # First token is class token
 
-        # Classification head
-        x = layers.Dense(512, activation="gelu", name="pre_classification")(
-            class_token_output
-        )
+        # === PURE VISUAL CLASSIFICATION HEAD ===
+        # No numerical fusion - direct classification from visual features
+        x = layers.Dense(
+            classification_head_size, activation="gelu", name="visual_classification_1"
+        )(visual_class_token)
         x = layers.Dropout(self.model_config["dropout_rate"])(x)
 
+        x = layers.Dense(
+            classification_head_size // 2, activation="gelu", name="visual_classification_2"
+        )(x)
+        x = layers.Dropout(self.model_config["dropout_rate"] * 0.5)(x)
+
+        x = layers.Dense(
+            classification_head_size // 4, activation="gelu", name="visual_classification_3"
+        )(x)
+        x = layers.Dropout(self.model_config["dropout_rate"] * 0.25)(x)
+
+        # Final 4-class classification layer
         predictions = layers.Dense(
-            num_classes, activation="softmax", name="pattern_classification"
+            num_classes, activation="softmax", name="pure_visual_classification"
         )(x)
 
-        # Create model
+        # Create PURE VISUAL model (single input)
         self.model = keras.Model(
-            inputs=image_input, outputs=predictions, name="pure_visual_vit_base"
+            inputs=image_input,  # Only chart images - NO numerical input
+            outputs=predictions, 
+            name="pure_visual_vit"
         )
 
         total_params = self.model.count_params()
-        self.logger.info(
-            f"Pure visual ViT-Base model created with {total_params:,} parameters"
-        )
+        visual_params = total_params  # All parameters are visual now
+        
+        self.logger.info(f"PURE VISUAL ViT model created with {total_params:,} parameters")
+        self.logger.info(f"ALL {visual_params:,} parameters dedicated to visual learning")
+        self.logger.info(f"Image input: {image_size}x{image_size}x3")
+        self.logger.info(f"Patches: {num_patches} ({patch_size}x{patch_size} each)")
+        self.logger.info(f"NO numerical features - pure visual learning only")
 
         return self.model
 
-    def compile_model(self, learning_rate: float = None):
+    def compile_model(self, learning_rate: float = None, class_weights: Dict[int, float] = None):
         """
         Compile the pure visual ViT model.
 
         Args:
             learning_rate: Learning rate for optimizer
+            class_weights: Class weights for handling imbalance
         """
         if self.model is None:
             raise ValueError("Model must be created before compilation")
@@ -249,36 +276,49 @@ class PureVisualViTModel:
         if learning_rate is None:
             learning_rate = self.model_config["learning_rate"]
 
-        # Learning rate schedule
+        # Learning rate schedule for pure visual learning
         if self.config["training"].get("lr_scheduling", True):
+            # Adjust decay steps based on expected dataset size
+            expected_samples = self.config["dataset"].get("expected_total_samples", 6500)
+            batch_size = self.model_config["batch_size"]
+            steps_per_epoch = expected_samples // batch_size
+            total_steps = steps_per_epoch * self.model_config["epochs"]
+            
             lr_schedule = keras.optimizers.schedules.CosineDecay(
                 initial_learning_rate=learning_rate,
-                decay_steps=1000,  # Will be updated based on dataset size
+                decay_steps=total_steps,
                 alpha=0.1,
             )
+            self.logger.info(f"Learning rate schedule: CosineDecay over {total_steps} steps")
         else:
             lr_schedule = learning_rate
 
-        # Optimizer
+        # Optimizer optimized for pure visual learning
         optimizer = keras.optimizers.AdamW(
-            learning_rate=lr_schedule, weight_decay=self.model_config["weight_decay"]
+            learning_rate=lr_schedule, 
+            weight_decay=self.model_config["weight_decay"]
         )
 
-        # Metrics
+        # Pure visual metrics (simplified)
         metrics = [
             "accuracy",
-            keras.metrics.Precision(name="precision"),
-            keras.metrics.Recall(name="recall"),
+            "sparse_categorical_accuracy",
         ]
 
-        # Compile model
-        self.model.compile(
-            optimizer=optimizer, loss="sparse_categorical_crossentropy", metrics=metrics
-        )
+        # Loss function for 4-class classification (labels are 0-3 in TensorFlow)
+        loss = "sparse_categorical_crossentropy"
 
-        self.logger.info("Pure visual ViT-Base model compiled successfully")
+        # Compile model
+        self.model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+
+        self.logger.info("PURE VISUAL ViT model compiled successfully")
         self.logger.info(f"Learning rate: {learning_rate}")
         self.logger.info(f"Weight decay: {self.model_config['weight_decay']}")
+        self.logger.info(f"Loss function: {loss}")
+        self.logger.info(f"'The Test' target: >40% accuracy proves visual learning")
+
+        if class_weights:
+            self.logger.info(f"Class weights: {class_weights}")
 
     def get_model_summary(self) -> str:
         """Get detailed model summary."""
@@ -335,51 +375,142 @@ class PureVisualViTModel:
         self.logger.info(f"Weights saved: {weights_path}")
         return weights_path
 
+    def create_class_weights(
+        self, class_distribution: Dict[int, int]
+    ) -> Dict[int, float]:
+        """
+        Create class weights for handling class imbalance in 4-class system.
+
+        Args:
+            class_distribution: Dictionary with class counts (1-4)
+
+        Returns:
+            Dictionary with class weights (0-3 for TensorFlow)
+        """
+        total_samples = sum(class_distribution.values())
+        num_classes = len(class_distribution)
+
+        class_weights = {}
+        for class_id, count in class_distribution.items():
+            # Convert from 1-4 to 0-3 for TensorFlow
+            tf_class_id = class_id - 1
+            # Inverse frequency weighting
+            class_weights[tf_class_id] = total_samples / (num_classes * count)
+
+        self.logger.info(f"Class weights calculated: {class_weights}")
+        return class_weights
+
+    def predict_pattern(self, image_batch: np.ndarray) -> Dict[str, np.ndarray]:
+        """
+        Predict daily patterns from chart images ONLY (pure visual).
+
+        Args:
+            image_batch: Batch of chart images (NO numerical features)
+
+        Returns:
+            Dictionary with predictions and confidence scores
+        """
+        if self.model is None:
+            raise ValueError("Model must be created and trained before prediction")
+
+        # Get raw predictions (pure visual input only)
+        predictions = self.model.predict(image_batch, verbose=0)
+
+        # Extract class predictions and confidence
+        predicted_classes = np.argmax(predictions, axis=1)
+        confidence_scores = np.max(predictions, axis=1)
+
+        # Convert to pattern labels (0-3 -> 1-4)
+        pattern_labels = predicted_classes + 1
+
+        # Pattern names
+        pattern_names = {
+            1: "High Breakout",
+            2: "Low Breakdown", 
+            3: "Range Expansion",
+            4: "Range Bound"
+        }
+        
+        pattern_labels_text = [pattern_names[label] for label in pattern_labels]
+
+        return {
+            "predictions": predictions,
+            "predicted_classes": predicted_classes,  # 0-3 for TensorFlow
+            "pattern_labels": pattern_labels,  # 1-4 for interpretation
+            "pattern_names": pattern_labels_text,
+            "confidence_scores": confidence_scores,
+            "class_probabilities": {
+                "high_breakout": predictions[:, 0],
+                "low_breakdown": predictions[:, 1],
+                "range_expansion": predictions[:, 2],
+                "range_bound": predictions[:, 3],
+            },
+        }
+
 
 def main():
     """Test the pure visual ViT model."""
-    print("Testing Pure Visual ViT-Base Model...")
+    print("🚀 NQ_AI Pure Visual ViT Model - 'The Test'")
+    print("Testing visual learning without numerical crutch")
 
     try:
         # Initialize model
         model_builder = PureVisualViTModel()
 
         # Create model
-        print("🏗️  Creating pure visual ViT-Base model...")
+        print("🏗️  Creating pure visual ViT model...")
         model = model_builder.create_model()
 
         # Compile model
-        print("⚙️  Compiling model...")
+        print("⚙️  Compiling pure visual model...")
         model_builder.compile_model()
 
         # Print model summary
-        print("📊 Model Summary:")
+        print("📊 Pure Visual Model Summary:")
         print(f"   Total parameters: {model.count_params():,}")
-        print(f"   Input shape: {model.input.shape}")
+        print(f"   Visual input shape: {model.input.shape}")
         print(f"   Output shape: {model.output.shape}")
+        print(f"   Classes: 4")
+        print(f"   Numerical features: 0 (PURE VISUAL)")
 
         # Test with dummy data
         print("🧪 Testing with dummy data...")
 
-        batch_size = 2
+        batch_size = 4
         image_size = model_builder.model_config["image_size"]
         dummy_images = np.random.rand(batch_size, image_size, image_size, 3)
 
-        # Test prediction
+        # Test prediction (pure visual only)
         predictions = model.predict(dummy_images, verbose=0)
+        pattern_results = model_builder.predict_pattern(dummy_images)
 
-        print(f"✅ Pure visual ViT-Base test successful!")
-        print(f"   Input shape: {dummy_images.shape}")
+        print(f"✅ Pure Visual ViT test successful!")
+        print(f"   Visual input shape: {dummy_images.shape}")
         print(f"   Output shape: {predictions.shape}")
         print(f"   Sample predictions: {predictions[0]}")
+        print(f"   Pattern names: {pattern_results['pattern_names']}")
+        print(f"   Confidence scores: {pattern_results['confidence_scores']}")
         print(f"   Model size: ~{model.count_params() * 4 / 1e6:.1f} MB")
 
-        print("🎯 Model Features:")
-        print("   - Pure visual input (224x224x3)")
-        print("   - No numerical features")
-        print("   - 87M parameter ViT-Base architecture")
-        print("   - 4-class pattern classification")
-        print("   - Optimized for multi-instrument training")
+        print("\n🎯 'The Test' Features:")
+        print("   - PURE visual learning - NO numerical crutch")
+        print(f"   - High resolution: {image_size}x{image_size}x3 chart images")
+        print("   - 4-class previous day levels classification")
+        print("   - 87M+ parameter ViT-Base backbone (100% visual)")
+        print("   - Single input: chart images with reference lines only")
+        print("   - Success criteria: >40% accuracy proves visual learning")
+        print("   - Failure criteria: <30% accuracy = pivot to numerical")
+
+        # Test class weights calculation
+        print("\n📊 Testing class weights calculation...")
+        test_distribution = {1: 1600, 2: 1650, 3: 1550, 4: 1700}  # NASDAQ distribution
+        class_weights = model_builder.create_class_weights(test_distribution)
+        print(f"   Class weights: {class_weights}")
+
+        print("\n🔬 'The Test' Hypothesis:")
+        print("   If ViT achieves >40% accuracy with pure visual learning,")
+        print("   then visual patterns contain predictive information.")
+        print("   If <30% accuracy, numerical features are superior.")
 
         return 0
 

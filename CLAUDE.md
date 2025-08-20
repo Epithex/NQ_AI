@@ -6,7 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-NQ_AI is a hybrid AI trading system that analyzes daily candlestick patterns across major US index futures using a combination of computer vision and numerical features. The system uses a hybrid ViT-Base architecture (87M+ parameters) to classify daily chart patterns based on previous day levels interactions with both visual and numerical feature fusion.
+NQ_AI is an AI trading system that analyzes daily candlestick patterns across major US index futures using computer vision approaches. The system supports both hybrid and pure visual architectures using ViT-Base (87M+ parameters) to classify daily chart patterns based on previous day levels interactions.
+
+**Two Approaches Available**:
+1. **Hybrid**: Visual charts + numerical features with feature fusion
+2. **Pure Visual**: ONLY 448x448 chart images - NO numerical features
 
 **Core Function**: 4-class hybrid classification system that predicts daily pattern interactions with previous day levels:
 - **1**: High Breakout (current_high >= prev_high && current_low > prev_low)
@@ -155,6 +159,14 @@ The system implements a hybrid pattern analysis pipeline with four core componen
   hybrid_vit_model.py          # Hybrid ViT-Base (87M+ params) with visual + numerical fusion
   train_daily_model.py         # 4-class hybrid classification training pipeline
   
+  # Pure Visual System (NEW)
+  pure_visual_pattern_analyzer.py    # 4-class classification WITHOUT numerical features
+  pure_visual_chart_generator.py     # 448x448 charts with volume bars and reference lines
+  pure_visual_dataset_creator.py     # Pure visual dataset creation (NO numerical features)
+  pure_visual_data_loader.py         # TensorFlow pipeline for single input (images only)
+  pure_visual_daily_vit_model.py     # Pure visual ViT-Base (87M+ params, NO fusion)
+  train_pure_visual_daily.py         # Pure visual training pipeline
+  
   # Legacy binary system (for reference)
   binary_pattern_analyzer.py   # Binary bullish/bearish logic - LEGACY
   binary_chart_generator.py    # Clean charts (no reference lines) - LEGACY
@@ -171,19 +183,25 @@ The system implements a hybrid pattern analysis pipeline with four core componen
   /images_daily                # 4-class hybrid chart images (224x224) with reference lines
   /labels_daily                # 4-class hybrid labels and metadata
   /metadata_daily              # Hybrid dataset manifests and indices
+  /images_pure_visual_daily    # Pure visual chart images (448x448) with volume and reference lines
+  /labels_pure_visual_daily    # Pure visual labels (NO numerical features)
+  /metadata_pure_visual_daily  # Pure visual dataset manifests
   
 /models
   /outputs_daily               # Hybrid model training artifacts and results
+  /outputs_pure_visual_daily   # Pure visual model training artifacts and results
   
 /config
-  config_daily_hybrid.yaml     # 4-class hybrid ViT configuration (Current)
+  config_daily_hybrid.yaml     # 4-class hybrid ViT configuration
+  config_pure_visual_daily.yaml # Pure visual ViT configuration (NEW)
   # Legacy configurations (for reference)
   config_binary_visual.yaml    # Binary ViT-Base - LEGACY
   config_pure_visual.yaml      # 4-class ViT-Base - LEGACY
   config.yaml                  # Custom hybrid ViT - LEGACY
 
 # Main Scripts
-generate_daily_dataset.py     # Generate complete 4-class hybrid dataset
+generate_daily_dataset.py           # Generate complete 4-class hybrid dataset
+generate_pure_visual_daily_dataset.py # Generate pure visual dataset (NEW)
 ```
 
 ## Model Architecture
@@ -204,23 +222,53 @@ generate_daily_dataset.py     # Generate complete 4-class hybrid dataset
 - **Classification Head**: 4-class output with softmax activation
 - **Total Parameters**: 87M+ (ViT-Base + fusion layers)
 
+### Pure Visual Daily ViT-Base (87M+ parameters)
+- Google ViT-Base-Patch16-448 architecture for pure visual learning
+- 12 transformer layers, 768 hidden size, 12 attention heads
+- **Single input architecture**: ONLY 448x448 chart images - NO numerical features
+- **4-class pattern output**: Previous day levels classification (same classes as hybrid)
+- **NO feature fusion**: All 87M+ parameters dedicated to visual learning
+- **High resolution**: 448x448 vs 224x224 for richer visual information
+- **Volume bars**: Enabled for additional visual context
+
+#### Pure Visual Architecture Details
+- **Single Input**: 448x448 chart images with volume bars and reference lines
+- **NO Numerical Branch**: Pure visual approach - no numerical features
+- **NO Feature Fusion**: All model capacity for visual pattern recognition
+- **Enhanced Resolution**: 2x higher resolution than hybrid (448 vs 224)
+- **Volume Information**: Volume bars included for richer visual context
+- **Classification Head**: Direct from visual features to 4-class output
+- **Total Parameters**: 87M+ (ALL dedicated to visual learning)
+
 ## Development Priorities
 
 1. **4-Class Hybrid Implementation**: Complete hybrid system with visual + numerical fusion ✅ COMPLETE
-2. **Parallel Processing**: Multi-worker dataset generation with ProcessPoolExecutor ✅ COMPLETE
-3. **Hybrid Training Pipeline**: TensorFlow training with dual inputs ✅ COMPLETE
-4. **Previous Day Levels Strategy**: 4-class pattern classification system ✅ COMPLETE
-5. **RunPod Deployment**: GPU training on complete hybrid dataset ⏳ PENDING
+2. **Pure Visual Implementation**: Complete pure visual system with 448x448 images ✅ COMPLETE
+3. **Parallel Processing**: Multi-worker dataset generation with ProcessPoolExecutor ✅ COMPLETE
+4. **Training Pipelines**: TensorFlow training for both hybrid and pure visual ✅ COMPLETE
+5. **Previous Day Levels Strategy**: 4-class pattern classification system ✅ COMPLETE
+6. **RunPod Deployment**: GPU training on datasets ⏳ PENDING
 
 ## Important Implementation Notes
 
-- **Chart Display**: Show 30 daily bars (approximately 6 weeks) with previous day level reference lines
+### Hybrid Approach
+- **Chart Display**: Show 30 daily bars with previous day level reference lines (224x224)
+- **Dual Input**: Chart images (224x224) + numerical features (3 elements)
+- **Feature Fusion**: Early fusion combining visual and numerical features
+
+### Pure Visual Approach  
+- **Chart Display**: Show 30 daily bars with previous day level reference lines (448x448)
+- **Single Input**: ONLY chart images - NO numerical features
+- **Volume Bars**: ENABLED for richer visual information
+- **High Resolution**: 448x448 for enhanced visual detail
+- **NO Early Stopping**: Train for full epoch count
+
+### Common Implementation
 - **Reference Lines**: Green line for previous day high, red line for previous day low
 - **Pattern Analysis**: Compare current day high/low vs previous day high/low levels
-- **Hybrid Input**: Both chart images (224x224) and numerical features (3 elements)
 - **Multi-Instrument**: Same pattern logic applied across DOW, NASDAQ, SP500 futures
 - **No Data Augmentation**: Preserve chart integrity for financial data
-- **Complex Logic**: 4-class pattern system based on level interactions
+- **4-Class Logic**: Pattern system based on level interactions
 
 ## Current Status
 
